@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkey.onEdge = { [weak self] edge in
             guard let self else { return }
+            NSLog("Parla: fn %@", edge == .down ? "down" : "up")
             switch edge {
             case .down:
                 self.isRecording = true
