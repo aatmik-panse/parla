@@ -1,0 +1,18 @@
+import XCTest
+@testable import ParlaCore
+
+final class TranscriberTests: XCTestCase {
+    func testTranscribeSilenceProducesNoCrash() throws {
+        let path = WhisperTranscriber.defaultModelPath()
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: path),
+                          "no whisper model — run scripts/download-model.sh")
+        let t = try WhisperTranscriber(modelPath: path)
+        // 1s of silence: must not crash; output may be empty or hallucinated punctuation.
+        let out = t.transcribe([Float](repeating: 0, count: 16_000), initialPrompt: "Kubernetes")
+        XCTAssertNotNil(out)
+    }
+
+    func testMissingModelThrows() {
+        XCTAssertThrowsError(try WhisperTranscriber(modelPath: "/nonexistent.bin"))
+    }
+}
