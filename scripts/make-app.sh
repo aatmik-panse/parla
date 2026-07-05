@@ -23,5 +23,8 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 </dict>
 </plist>
 EOF
-codesign --force -s - "$APP"
+# Stable designated requirement: TCC ties Mic/Accessibility grants to the DR;
+# plain ad-hoc uses the per-build cdhash, so every rebuild wiped the grants.
+codesign --force -s - --identifier com.parla.app \
+  -r='designated => identifier "com.parla.app"' "$APP"
 echo "Built $APP — run: open $APP"
