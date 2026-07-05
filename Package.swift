@@ -17,6 +17,7 @@ let package = Package(
         .target(name: "ParlaCore",
                 dependencies: [.product(name: "whisper", package: "whisper.cpp")]),
         .executableTarget(name: "Parla", dependencies: ["ParlaCore"]),
+        .executableTarget(name: "parla-eval", dependencies: ["ParlaCore"]),
         .testTarget(name: "ParlaCoreTests", dependencies: ["ParlaCore"]),
     ]
 )
