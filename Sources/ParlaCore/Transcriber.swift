@@ -15,8 +15,11 @@ public final class WhisperTranscriber {
     }
 
     public init(modelPath: String) throws {
-        // Not mutated → let (avoids "never mutated" warning). Metal/GPU is on by default.
-        let params = whisper_context_default_params()
+        // ponytail: CPU-only — the v1.7.2 SPM pin ships a broken Metal resource bundle
+        // (ggml-common.h missing), and GPU init spams stderr before falling back anyway.
+        // Re-enable when moving to a newer whisper.cpp with working SPM+Metal.
+        var params = whisper_context_default_params()
+        params.use_gpu = false
         guard let ctx = whisper_init_from_file_with_params(modelPath, params) else {
             throw TranscriberError(description: "failed to load whisper model at \(modelPath)")
         }
