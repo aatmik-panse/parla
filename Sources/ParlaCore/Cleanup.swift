@@ -57,6 +57,7 @@ public struct URLSessionPoster: HTTPPosting {
 
 public struct CleanupError: Error, CustomStringConvertible {
     public let description: String
+    public init(description: String) { self.description = description }
 }
 
 public struct CleanupClient {
