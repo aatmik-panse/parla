@@ -60,7 +60,33 @@ public struct CleanupError: Error, CustomStringConvertible {
     public init(description: String) { self.description = description }
 }
 
-public struct CleanupClient {
+public protocol CleanupProviding {
+    func clean(transcript: String, context: CleanupContext) async throws -> String
+}
+
+public enum CleanupSanitizer {
+    // Strip ONE wrapping quote pair only when the first and last chars are a matching
+    // pair. ponytail: no preamble stripping ("Sure, here's..." etc.) — too risky to
+    // guess where the model's chatter ends and the user's text begins; upgrade only if
+    // a provider proves reliably chatty.
+    static let pairs: [(Character, Character)] = [
+        ("\"", "\""), ("'", "'"), ("\u{201C}", "\u{201D}"),
+    ]
+
+    public static func sanitize(_ s: String) -> String {
+        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first, let last = trimmed.last, trimmed.count >= 2 else {
+            return trimmed
+        }
+        for (open, close) in pairs where first == open && last == close {
+            return String(trimmed.dropFirst().dropLast())
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return trimmed
+    }
+}
+
+public struct CleanupClient: CleanupProviding {
     let apiKey: String
     let model: String
     let http: HTTPPosting

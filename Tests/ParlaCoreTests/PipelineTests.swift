@@ -27,6 +27,12 @@ final class PipelineTests: XCTestCase {
         XCTAssertEqual(out, "Hello.")
     }
 
+    func testCleanupResultIsSanitized() async {
+        let p = makePipeline(transcript: "um hello") { _, _ in "\"Cleaned.\"" }
+        let out = await p.process(samples: [0.1])
+        XCTAssertEqual(out, "Cleaned.")
+    }
+
     func testCleanupFailureFallsBackToRawTranscript() async {
         let p = makePipeline(transcript: "raw words") { _, _ in
             throw CleanupError(description: "boom")
