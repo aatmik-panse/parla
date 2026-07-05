@@ -1,0 +1,5 @@
+.build/
+*.app
+models/
+.DS_Store
+.superpowers/
