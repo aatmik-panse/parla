@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Live streaming: whether the focused field accepts typed text, and what
     // we've already streamed into it (grapheme-accurate, so backspace counts match).
     var liveTyping = false
+    var focus = Inserter.FocusTarget.none
     var typed = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -40,9 +41,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSLog("Parla mic start failed: \(error)")
                     return
                 }
-                // Only stream into a real editable field; elsewhere keystrokes
-                // could fire shortcuts, so we stay clipboard-only (see finish).
-                self.liveTyping = Inserter.focusedElementIsEditable()
+                // Only stream into a confirmed text field; elsewhere keystrokes
+                // could fire shortcuts. Unconfirmed focus still gets the final
+                // text pasted; no focus at all is clipboard-only (see finish).
+                self.focus = Inserter.focusTarget()
+                self.liveTyping = self.focus == .editable
                 if self.liveTyping, let transcriber = self.transcriber {
                     // Chain onto the previous finish so partial passes never run
                     // concurrently with the final pass (whisper ctx isn't reentrant).
@@ -54,9 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .up:
                 self.isRecording = false
                 let samples = self.recorder.stop()
-                // Capture this dictation's live mode now: a quick next fn-press
-                // rewrites self.liveTyping before finish runs.
+                // Capture this dictation's mode now: a quick next fn-press
+                // rewrites self.liveTyping/focus before finish runs.
                 let live = self.liveTyping
+                let focus = self.focus
                 self.setStatus("…")
                 self.hud.show(.cleaning)
                 // Chain onto the previous work (any in-flight streaming pass):
@@ -64,14 +68,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // dictation order.
                 self.processTask = Task { [prev = self.processTask] in
                     await prev?.value
-                    await self.finish(samples: samples, live: live)
+                    await self.finish(samples: samples, live: live, focus: focus)
                 }
             }
         }
         hotkey.start()
     }
 
-    func finish(samples: [Float], live: Bool) async {
+    func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget) async {
         let hud = self.hud // bind so main-queue hops don't capture non-Sendable self
         defer {
             DispatchQueue.main.async {
@@ -100,13 +104,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         await MainActor.run {
             let typedCount = self.typed.count // graphemes streamed live so far
             if let text = result {
-                if live {
+                switch (live, focus) {
+                case (true, _):
                     // Replace the live-typed text wholesale with the cleaned final.
                     Inserter.typeBackspaces(typedCount)
                     Inserter.insert(text)
                     hud.show(.done)
-                } else {
-                    Inserter.copy(text) // no focus: clipboard only, never paste
+                case (false, .unknown), (false, .editable):
+                    Inserter.insert(text) // focus we couldn't stream into: paste at cursor
+                    hud.show(.done)
+                case (false, .none):
+                    Inserter.copy(text) // nothing focused: clipboard only, never paste
                     hud.show(.copied)
                 }
             } else {

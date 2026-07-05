@@ -78,24 +78,52 @@ public enum Inserter {
         }
     }
 
-    /// Best-effort: is the currently focused UI element a text field we can type
-    /// into? Any failure / no element ⇒ false, so live typing only ever fires
-    /// into a real editable context (stray keystrokes elsewhere could trigger
-    /// shortcuts).
-    public static func focusedElementIsEditable() -> Bool {
+    /// What Parla can do with the current keyboard focus.
+    public enum FocusTarget {
+        case editable   // confirmed text field: safe to live-type into
+        case unknown    // something is focused but AX can't confirm it's a field: paste, don't stream
+        case none       // no focused element at all: clipboard only
+    }
+
+    /// Best-effort focus classification. Chromium/Electron apps (Chrome, VS Code,
+    /// Slack…) expose no AX tree until an assistive client flips their
+    /// accessibility flags, so on a non-editable answer we flip them and retry
+    /// once. First dictation in such an app may still classify as .unknown
+    /// (paste fallback); subsequent ones see the real field.
+    public static func focusTarget() -> FocusTarget {
+        var result = classifyFocus()
+        if result != .editable, let app = NSWorkspace.shared.frontmostApplication {
+            let appEl = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetAttributeValue(appEl, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+            AXUIElementSetAttributeValue(appEl, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+            usleep(50_000) // give the app a beat to build its AX tree
+            result = classifyFocus()
+        }
+        return result
+    }
+
+    private static func classifyFocus() -> FocusTarget {
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let focused else { return false }
+              let focused else { return .none }
         let element = focused as! AXUIElement // AX always hands back an AXUIElement
         var role: CFTypeRef?
         if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success,
            let role = role as? String,
-           ["AXTextField", "AXTextArea", "AXSearchField"].contains(role) {
-            return true
+           ["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"].contains(role) {
+            return .editable
         }
-        // Fallback: anything exposing a selectable text range is editable text.
+        // A settable value or a selectable text range both mean editable text.
+        var settable = DarwinBoolean(false)
+        if AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success,
+           settable.boolValue {
+            return .editable
+        }
         var sel: CFTypeRef?
-        return AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &sel) == .success
+        if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &sel) == .success {
+            return .editable
+        }
+        return .unknown
     }
 }
