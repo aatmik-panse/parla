@@ -25,7 +25,7 @@ public struct Pipeline {
         let ctx = CleanupContext(dictionary: s.dictionary, snippets: s.snippets,
                                  appName: frontAppName())
         do {
-            return try await cleanup(transcript, ctx)
+            return CleanupSanitizer.sanitize(try await cleanup(transcript, ctx))
         } catch {
             // Cleanup must never kill a dictation — hand back the raw transcript.
             NSLog("Parla cleanup failed, inserting raw transcript: \(error)")
