@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let hotkey = HotkeyMonitor()
     let recorder = AudioRecorder()
     var transcriber: WhisperTranscriber?
+    var processTask: Task<Void, Never>?
+    var isRecording = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setStatus("🎤")
@@ -19,19 +21,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             switch edge {
             case .down:
+                self.isRecording = true
                 do { try self.recorder.start(); self.setStatus("🔴") }
                 catch { self.setStatus("⚠️"); NSLog("Parla mic start failed: \(error)") }
             case .up:
+                self.isRecording = false
                 let samples = self.recorder.stop()
                 self.setStatus("…")
-                Task { await self.finish(samples: samples) }
+                // Chain onto the previous finish: whisper ctx is not reentrant,
+                // and insertions must land in dictation order.
+                self.processTask = Task { [prev = self.processTask] in
+                    await prev?.value
+                    await self.finish(samples: samples)
+                }
             }
         }
         hotkey.start()
     }
 
     func finish(samples: [Float]) async {
-        defer { DispatchQueue.main.async { self.setStatus("🎤") } }
+        defer {
+            DispatchQueue.main.async {
+                // Don't stamp over an active recording, and keep ⚠️ visible
+                // while there's no model.
+                guard !self.isRecording else { return }
+                self.setStatus(self.transcriber == nil ? "⚠️" : "🎤")
+            }
+        }
         guard let transcriber else {
             NSLog("Parla: no whisper model loaded — run scripts/download-model.sh")
             return
