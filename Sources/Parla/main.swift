@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = SettingsStore()
     let hotkey = HotkeyMonitor()
     let recorder = AudioRecorder()
+    let hud = HUD()
     var transcriber: WhisperTranscriber?
     var processTask: Task<Void, Never>?
     var isRecording = false
@@ -17,17 +18,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         requestPermissions()
         loadModel()
 
+        recorder.onLevel = { [weak self] level in
+            DispatchQueue.main.async { self?.hud.push(level: level) }
+        }
+
         hotkey.onEdge = { [weak self] edge in
             guard let self else { return }
             switch edge {
             case .down:
                 self.isRecording = true
-                do { try self.recorder.start(); self.setStatus("🔴") }
-                catch { self.setStatus("⚠️"); NSLog("Parla mic start failed: \(error)") }
+                do { try self.recorder.start(); self.setStatus("🔴"); self.hud.show(.listening) }
+                catch {
+                    self.setStatus("⚠️"); self.hud.show(.error("Mic failed"))
+                    NSLog("Parla mic start failed: \(error)")
+                }
             case .up:
                 self.isRecording = false
                 let samples = self.recorder.stop()
                 self.setStatus("…")
+                self.hud.show(.cleaning)
                 // Chain onto the previous finish: whisper ctx is not reentrant,
                 // and insertions must land in dictation order.
                 self.processTask = Task { [prev = self.processTask] in
@@ -40,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func finish(samples: [Float]) async {
+        let hud = self.hud // bind so main-queue hops don't capture non-Sendable self
         defer {
             DispatchQueue.main.async {
                 // Don't stamp over an active recording, and keep ⚠️ visible
@@ -50,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let transcriber else {
             NSLog("Parla: no whisper model loaded — run scripts/download-model.sh")
+            DispatchQueue.main.async { hud.show(.error("No whisper model")) }
             return
         }
         let settings = store.load()
@@ -63,7 +74,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings: { settings },
             frontAppName: { NSWorkspace.shared.frontmostApplication?.localizedName })
         if let text = await pipeline.process(samples: samples) {
-            DispatchQueue.main.async { Inserter.insert(text) }
+            DispatchQueue.main.async { Inserter.insert(text); hud.show(.done) }
+        } else {
+            DispatchQueue.main.async { hud.hide() } // empty transcript — quiet
         }
     }
 
