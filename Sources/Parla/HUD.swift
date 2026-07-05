@@ -8,6 +8,7 @@ final class HUD: @unchecked Sendable {
         case listening
         case cleaning
         case done
+        case copied
         case error(String)
     }
 
@@ -76,6 +77,12 @@ final class HUD: @unchecked Sendable {
             dot.isHidden = true
             waveform.isHidden = true
             label.stringValue = "✓ Pasted"
+            panel.orderFrontRegardless()
+            scheduleHide()
+        case .copied:
+            dot.isHidden = true
+            waveform.isHidden = true
+            label.stringValue = "✓ In clipboard"
             panel.orderFrontRegardless()
             scheduleHide()
         case .error(let msg):

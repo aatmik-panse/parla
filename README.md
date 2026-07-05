@@ -19,6 +19,15 @@ release to transcribe, clean up, and type the text into the frontmost app.
 The menu-bar icon reflects state: 🎤 idle · 🔴 recording · … processing · ⚠️
 problem (no model loaded, or the mic failed to start).
 
+## Live streaming
+
+While you hold the hotkey, text streams into the focused text field in
+near-real-time, and gets replaced by the cleaned-up version on release. As
+whisper revises earlier words, Parla backspaces the wrong tail and retypes it —
+so **don't click or move the cursor while dictating**, or the backspaces land in
+the wrong place. If no editable text field has focus when you start, nothing is
+typed; the final text goes to the clipboard only (press ⌘V to paste it).
+
 ## Permissions
 
 Parla needs:

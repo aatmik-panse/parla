@@ -13,4 +13,8 @@ final class AudioRecorderTests: XCTestCase {
     func testRMSConstantSignal() {
         XCTAssertEqual(AudioRecorder.rms([Float](repeating: 0.5, count: 256)), 0.5, accuracy: 0.001)
     }
+
+    func testSnapshotOfFreshRecorderIsEmpty() {
+        XCTAssertTrue(AudioRecorder().snapshot().isEmpty)
+    }
 }
