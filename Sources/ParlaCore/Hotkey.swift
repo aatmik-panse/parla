@@ -1,6 +1,6 @@
 import AppKit
 
-/// Push-to-talk on Right Option (keyCode 61).
+/// Push-to-talk on fn/Globe (keyCode 63).
 /// ponytail: NSEvent global monitor instead of a CGEventTap — same Accessibility
 /// permission, far less code. Switch to a tap if we ever need to swallow the key.
 public final class HotkeyMonitor {
@@ -12,12 +12,12 @@ public final class HotkeyMonitor {
     public init() {}
 
     /// Pure state machine — exercised by tests.
-    public func handle(keyCode: UInt16, optionActive: Bool) {
-        guard keyCode == 61 else { return }
-        if optionActive && !isDown {
+    public func handle(keyCode: UInt16, fnActive: Bool) {
+        guard keyCode == 63 else { return }
+        if fnActive && !isDown {
             isDown = true
             onEdge?(.down)
-        } else if !optionActive && isDown {
+        } else if !fnActive && isDown {
             isDown = false
             onEdge?(.up)
         }
@@ -25,9 +25,7 @@ public final class HotkeyMonitor {
 
     public func start() {
         monitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
-            // 0x40 = NX_DEVICERALTKEYMASK (right-Alt device bit): `.option` is true while
-            // EITHER Option is held, which would miss the Right Option release.
-            self?.handle(keyCode: e.keyCode, optionActive: e.modifierFlags.rawValue & 0x40 != 0)
+            self?.handle(keyCode: e.keyCode, fnActive: e.modifierFlags.contains(.function))
         }
     }
 

@@ -13,7 +13,7 @@ open Parla.app
 
 On first launch Parla lives in the menu bar (no dock icon) and shows 🎤. macOS
 will prompt for **Microphone** and **Accessibility** permission — grant both in
-System Settings > Privacy & Security. Then hold **Right ⌥ (Option)** and speak;
+System Settings > Privacy & Security. Then hold **fn 🌐 (Globe)** and speak;
 release to transcribe, clean up, and type the text into the frontmost app.
 
 The menu-bar icon reflects state: 🎤 idle · 🔴 recording · … processing · ⚠️

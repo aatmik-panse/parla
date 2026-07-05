@@ -87,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func buildMenu() {
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Hold Right ⌥ to dictate", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Hold fn 🌐 to dictate", action: nil, keyEquivalent: ""))
         menu.addItem(.separator())
         let open = NSMenuItem(title: "Open Settings File", action: #selector(openSettings), keyEquivalent: "")
         open.target = self

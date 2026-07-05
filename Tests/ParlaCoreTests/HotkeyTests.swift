@@ -6,23 +6,23 @@ final class HotkeyTests: XCTestCase {
         let m = HotkeyMonitor()
         var out: [HotkeyMonitor.Edge] = []
         m.onEdge = { out.append($0) }
-        for (code, active) in events { m.handle(keyCode: code, optionActive: active) }
+        for (code, active) in events { m.handle(keyCode: code, fnActive: active) }
         return out
     }
 
     func testPressAndRelease() {
-        XCTAssertEqual(edges(for: [(61, true), (61, false)]), [.down, .up])
+        XCTAssertEqual(edges(for: [(63, true), (63, false)]), [.down, .up])
     }
 
-    func testLeftOptionIgnored() {
+    func testOtherModifierIgnored() {
         XCTAssertEqual(edges(for: [(58, true), (58, false)]), [])
     }
 
     func testRepeatedDownFiresOnce() {
-        XCTAssertEqual(edges(for: [(61, true), (61, true), (61, false)]), [.down, .up])
+        XCTAssertEqual(edges(for: [(63, true), (63, true), (63, false)]), [.down, .up])
     }
 
     func testUpWithoutDownIgnored() {
-        XCTAssertEqual(edges(for: [(61, false)]), [])
+        XCTAssertEqual(edges(for: [(63, false)]), [])
     }
 }
