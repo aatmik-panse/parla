@@ -51,6 +51,17 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(store.load().cleanupModel, "m")
     }
 
+    func testPartialCleanupBlockDecodesWithDefaults() throws {
+        let store = tempStore()
+        try FileManager.default.createDirectory(
+            at: store.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"cleanup":{"model":"m"},"dictionary":["X"]}"#.utf8).write(to: store.url)
+        let s = store.load()
+        XCTAssertEqual(s.cleanup.provider, "anthropic")
+        XCTAssertEqual(s.cleanup.model, "m")
+        XCTAssertEqual(s.dictionary, ["X"])
+    }
+
     func testCleanupBlockRoundTrip() throws {
         let store = tempStore()
         var s = Settings()

@@ -7,6 +7,17 @@ public struct CleanupSettings: Codable, Equatable {
     public var apiKeyEnvVar: String? = nil       // name of env var holding the key
     public var apiKey: String? = nil             // inline fallback
     public init() {}
+
+    // Tolerant decode: a partial cleanup block must not throw and reset all Settings.
+    public init(from decoder: Decoder) throws {
+        self.init()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try c.decodeIfPresent(String.self, forKey: .provider) ?? provider
+        baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? baseURL
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? model
+        apiKeyEnvVar = try c.decodeIfPresent(String.self, forKey: .apiKeyEnvVar) ?? apiKeyEnvVar
+        apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? apiKey
+    }
 }
 
 public struct Settings: Codable, Equatable {
