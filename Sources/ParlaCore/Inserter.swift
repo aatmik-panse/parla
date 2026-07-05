@@ -25,14 +25,27 @@ public enum Inserter {
         up.post(tap: .cghidEventTap)
     }
 
+    /// Split UTF-16 units into chunks of at most `max`, never ending a chunk on an
+    /// unpaired high surrogate (which would corrupt emoji/supplementary characters).
+    static func chunkUTF16(_ units: [UInt16], max: Int = 20) -> [[UInt16]] {
+        var chunks: [[UInt16]] = []
+        var i = 0
+        while i < units.count {
+            var end = Swift.min(i + max, units.count)
+            if end < units.count, (0xD800...0xDBFF).contains(units[end - 1]) {
+                end -= 1 // keep the surrogate pair together in the next chunk
+            }
+            chunks.append(Array(units[i ..< end]))
+            i = end
+        }
+        return chunks
+    }
+
     /// Fallback: type the text as Unicode keystrokes (layout-independent).
     /// Chunked because CGEventKeyboardSetUnicodeString caps around 20 UTF-16 units.
     public static func typeUnicode(_ text: String) {
         let src = CGEventSource(stateID: .combinedSessionState)
-        let units = Array(text.utf16)
-        var i = 0
-        while i < units.count {
-            let chunk = Array(units[i ..< min(i + 20, units.count)])
+        for chunk in chunkUTF16(Array(text.utf16)) {
             if let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true),
                let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) {
                 down.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
@@ -40,7 +53,6 @@ public enum Inserter {
                 down.post(tap: .cghidEventTap)
                 up.post(tap: .cghidEventTap)
             }
-            i += 20
             usleep(5_000)
         }
     }

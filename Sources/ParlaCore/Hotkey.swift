@@ -25,7 +25,9 @@ public final class HotkeyMonitor {
 
     public func start() {
         monitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
-            self?.handle(keyCode: e.keyCode, optionActive: e.modifierFlags.contains(.option))
+            // 0x40 = NX_DEVICERALTKEYMASK (right-Alt device bit): `.option` is true while
+            // EITHER Option is held, which would miss the Right Option release.
+            self?.handle(keyCode: e.keyCode, optionActive: e.modifierFlags.rawValue & 0x40 != 0)
         }
     }
 
