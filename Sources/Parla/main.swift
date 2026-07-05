@@ -11,6 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var transcriber: WhisperTranscriber?
     var processTask: Task<Void, Never>?
     var isRecording = false
+    // Live streaming: whether the focused field accepts typed text, and what
+    // we've already streamed into it (grapheme-accurate, so backspace counts match).
+    var liveTyping = false
+    var typed = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setStatus("🎤")
@@ -27,18 +31,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch edge {
             case .down:
                 self.isRecording = true
+                self.typed = ""
                 do { try self.recorder.start(); self.setStatus("🔴"); self.hud.show(.listening) }
                 catch {
                     self.setStatus("⚠️"); self.hud.show(.error("Mic failed"))
                     NSLog("Parla mic start failed: \(error)")
+                    return
+                }
+                // Only stream into a real editable field; elsewhere keystrokes
+                // could fire shortcuts, so we stay clipboard-only (see finish).
+                self.liveTyping = Inserter.focusedElementIsEditable()
+                if self.liveTyping, let transcriber = self.transcriber {
+                    // Chain onto the previous finish so partial passes never run
+                    // concurrently with the final pass (whisper ctx isn't reentrant).
+                    self.processTask = Task { [prev = self.processTask] in
+                        await prev?.value
+                        await self.stream(transcriber: transcriber)
+                    }
                 }
             case .up:
                 self.isRecording = false
                 let samples = self.recorder.stop()
                 self.setStatus("…")
                 self.hud.show(.cleaning)
-                // Chain onto the previous finish: whisper ctx is not reentrant,
-                // and insertions must land in dictation order.
+                // Chain onto the previous work (any in-flight streaming pass):
+                // whisper ctx is not reentrant, and insertions must land in
+                // dictation order.
                 self.processTask = Task { [prev = self.processTask] in
                     await prev?.value
                     await self.finish(samples: samples)
@@ -73,10 +91,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             settings: { settings },
             frontAppName: { NSWorkspace.shared.frontmostApplication?.localizedName })
-        if let text = await pipeline.process(samples: samples) {
-            DispatchQueue.main.async { Inserter.insert(text); hud.show(.done) }
-        } else {
-            DispatchQueue.main.async { hud.hide() } // empty transcript — quiet
+        let result = await pipeline.process(samples: samples)
+        let live = self.liveTyping
+        await MainActor.run {
+            let typedCount = self.typed.count // graphemes streamed live so far
+            if let text = result {
+                if live {
+                    // Replace the live-typed text wholesale with the cleaned final.
+                    Inserter.typeBackspaces(typedCount)
+                    Inserter.insert(text)
+                } else {
+                    Inserter.copy(text) // no focus: clipboard only, never paste
+                }
+                hud.show(.done)
+            } else {
+                // Empty transcript: undo anything we streamed, stay quiet.
+                Inserter.typeBackspaces(typedCount)
+                hud.hide()
+            }
+            self.typed = ""
+        }
+    }
+
+    /// Live streaming pass loop: while fn is held, re-transcribe the whole buffer
+    /// and reconcile it with what's already typed via erase+append. Runs on the
+    /// processTask chain (serialized with the final pass).
+    // ponytail: full-buffer re-transcription each pass is O(n²) over the
+    // utterance — fine for short dictations; window the buffer if it bites.
+    func stream(transcriber: WhisperTranscriber) async {
+        let dict = store.load().dictionary
+        let prompt = dict.isEmpty ? nil : dict.joined(separator: ", ")
+        var lastCount = 0
+        // ponytail: isRecording is written on main, read here — benign stop-flag race.
+        while self.isRecording {
+            let snap = self.recorder.snapshot()
+            guard snap.count - lastCount >= 8000 else { // <0.5s new audio, wait
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                continue
+            }
+            lastCount = snap.count
+            let text = transcriber.transcribe(snap, initialPrompt: prompt)
+            await MainActor.run {
+                let d = LiveTyper.diff(typed: self.typed, new: text)
+                Inserter.typeBackspaces(d.erase)
+                Inserter.typeUnicode(d.append)
+                self.typed = text
+            }
+            try? await Task.sleep(nanoseconds: 300_000_000)
         }
     }
 

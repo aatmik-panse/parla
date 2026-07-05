@@ -5,12 +5,17 @@ public enum Inserter {
     /// that is the escape hatch when an app rejects the paste.
     /// ponytail: no clipboard save/restore (racy per architecture.md); add only if users complain.
     public static func insert(_ text: String) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(text, forType: .string)
+        copy(text)
         // Give the pasteboard a beat before the keystroke lands.
         usleep(50_000)
         postCmdV()
+    }
+
+    /// Put text on the clipboard without pasting — the no-focus finalize path.
+    public static func copy(_ text: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
     }
 
     static func postCmdV() {
