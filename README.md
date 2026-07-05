@@ -37,6 +37,50 @@ menu-bar **Open Settings File** item to create and edit it. Fields:
 - `anthropicApiKey` — API key for cleanup. The `ANTHROPIC_API_KEY` environment variable takes precedence; if neither is set, Parla inserts the raw transcript.
 - `whisperModelPath` — absolute path to a ggml whisper model. Defaults to the model downloaded by `scripts/download-model.sh`.
 
+## Cleanup providers
+
+Cleanup defaults to **Anthropic** (the `cleanupModel` + `anthropicApiKey`/`ANTHROPIC_API_KEY` fields above); leave `cleanup` unset to keep that behavior. To use any OpenAI-compatible endpoint (Groq, Gemini, OpenAI, local Ollama/LM Studio), add a `cleanup` block:
+
+- `cleanup.provider` — `"anthropic"` (default) or `"openai-compatible"`.
+- `cleanup.baseURL` — required for `openai-compatible`; the API root (Parla POSTs to `{baseURL}/chat/completions`).
+- `cleanup.model` — required for `openai-compatible`; for Anthropic it overrides `cleanupModel`.
+- `cleanup.apiKeyEnvVar` — name of the env var holding the key (takes precedence over `cleanup.apiKey`).
+- `cleanup.apiKey` — inline key fallback. Omit both for keyless local servers (Ollama).
+
+Key resolution: `cleanup.apiKeyEnvVar` → `cleanup.apiKey` → (Anthropic only) `ANTHROPIC_API_KEY` → `anthropicApiKey`. Any misconfiguration falls back to inserting the raw transcript.
+
+**Groq** (set `GROQ_API_KEY`):
+
+```json
+"cleanup": {
+  "provider": "openai-compatible",
+  "baseURL": "https://api.groq.com/openai/v1",
+  "model": "llama-3.3-70b-versatile",
+  "apiKeyEnvVar": "GROQ_API_KEY"
+}
+```
+
+**Gemini** (set `GEMINI_API_KEY`):
+
+```json
+"cleanup": {
+  "provider": "openai-compatible",
+  "baseURL": "https://generativelanguage.googleapis.com/v1beta/openai",
+  "model": "gemini-2.5-flash",
+  "apiKeyEnvVar": "GEMINI_API_KEY"
+}
+```
+
+**Ollama** (local, no key):
+
+```json
+"cleanup": {
+  "provider": "openai-compatible",
+  "baseURL": "http://localhost:11434/v1",
+  "model": "llama3.1"
+}
+```
+
 ## Build & test
 
 ```sh

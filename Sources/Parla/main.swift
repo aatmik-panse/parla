@@ -53,15 +53,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let settings = store.load()
-        let apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]
-            ?? settings.anthropicApiKey
         let pipeline = Pipeline(
             transcribe: { samples, prompt in transcriber.transcribe(samples, initialPrompt: prompt) },
             cleanup: { transcript, ctx in
-                guard let apiKey else {
-                    throw CleanupError(description: "no ANTHROPIC_API_KEY")
-                }
-                return try await CleanupClient(apiKey: apiKey, model: settings.cleanupModel)
+                // A factory throw (misconfig / no key) lands in Pipeline's raw-transcript fallback.
+                try await makeCleanupClient(settings: settings, env: ProcessInfo.processInfo.environment)
                     .clean(transcript: transcript, context: ctx)
             },
             settings: { settings },

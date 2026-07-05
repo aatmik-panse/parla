@@ -48,10 +48,13 @@ guard FileManager.default.fileExists(atPath: modelPath) else {
 
 let settings = SettingsStore().load()
 
-// Key resolution: env first, then settings. appName is nil for evals.
-let apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? settings.anthropicApiKey
-guard let apiKey, !apiKey.isEmpty else {
-    FileHandle.standardError.write(Data("error: no API key (set ANTHROPIC_API_KEY or settings.anthropicApiKey)\n".utf8))
+// Provider client via the shared factory; misconfig (no key, missing baseURL/model) → exit 2.
+let client: CleanupProviding
+do {
+    client = try makeCleanupClient(
+        settings: settings, env: ProcessInfo.processInfo.environment)
+} catch {
+    FileHandle.standardError.write(Data("error: \(error)\n".utf8))
     exit(2)
 }
 
@@ -63,7 +66,6 @@ do {
     exit(2)
 }
 
-let client = CleanupClient(apiKey: apiKey, model: settings.cleanupModel)
 let prompt = settings.dictionary.isEmpty ? nil : settings.dictionary.joined(separator: ", ")
 
 var passes = 0
