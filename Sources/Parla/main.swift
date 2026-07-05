@@ -31,7 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch edge {
             case .down:
                 self.isRecording = true
-                self.typed = ""
+                // typed is NOT reset here: a still-queued finish from the previous
+                // dictation must see it to erase that dictation's live text.
                 do { try self.recorder.start(); self.setStatus("🔴"); self.hud.show(.listening) }
                 catch {
                     self.setStatus("⚠️"); self.hud.show(.error("Mic failed"))
@@ -52,6 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .up:
                 self.isRecording = false
                 let samples = self.recorder.stop()
+                // Capture this dictation's live mode now: a quick next fn-press
+                // rewrites self.liveTyping before finish runs.
+                let live = self.liveTyping
                 self.setStatus("…")
                 self.hud.show(.cleaning)
                 // Chain onto the previous work (any in-flight streaming pass):
@@ -59,14 +63,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // dictation order.
                 self.processTask = Task { [prev = self.processTask] in
                     await prev?.value
-                    await self.finish(samples: samples)
+                    await self.finish(samples: samples, live: live)
                 }
             }
         }
         hotkey.start()
     }
 
-    func finish(samples: [Float]) async {
+    func finish(samples: [Float], live: Bool) async {
         let hud = self.hud // bind so main-queue hops don't capture non-Sendable self
         defer {
             DispatchQueue.main.async {
@@ -92,7 +96,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings: { settings },
             frontAppName: { NSWorkspace.shared.frontmostApplication?.localizedName })
         let result = await pipeline.process(samples: samples)
-        let live = self.liveTyping
         await MainActor.run {
             let typedCount = self.typed.count // graphemes streamed live so far
             if let text = result {
@@ -100,10 +103,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // Replace the live-typed text wholesale with the cleaned final.
                     Inserter.typeBackspaces(typedCount)
                     Inserter.insert(text)
+                    hud.show(.done)
                 } else {
                     Inserter.copy(text) // no focus: clipboard only, never paste
+                    hud.show(.copied)
                 }
-                hud.show(.done)
             } else {
                 // Empty transcript: undo anything we streamed, stay quiet.
                 Inserter.typeBackspaces(typedCount)
