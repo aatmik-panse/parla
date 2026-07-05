@@ -63,6 +63,7 @@ final class HUD: @unchecked Sendable {
         case .listening:
             dot.isHidden = false
             waveform.isHidden = false
+            waveform.clear()
             label.stringValue = "Listening…"
             position()
             panel.orderFrontRegardless()
@@ -118,6 +119,11 @@ final class WaveformView: NSView {
     func push(level: Float) {
         levels.append(level)
         if levels.count > capacity { levels.removeFirst(levels.count - capacity) }
+        needsDisplay = true
+    }
+
+    func clear() {
+        levels.removeAll()
         needsDisplay = true
     }
 
