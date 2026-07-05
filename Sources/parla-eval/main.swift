@@ -1,24 +1,10 @@
 import Foundation
-import AVFoundation
 import ParlaCore
 
 // parla-eval: day-one regression harness. For each NAME.wav with a sibling
 // NAME.golden.txt in the cases dir, transcribe → cleanup → compare
 // Eval.normalize(actual) == Eval.normalize(golden), and report zero-edit rate
 // and asr/llm latency percentiles.
-
-func loadSamples(url: URL) throws -> [Float] {
-    let file = try AVAudioFile(forReading: url)
-    var all: [Float] = []
-    let format = file.processingFormat
-    while true {
-        guard let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_384) else { break }
-        try file.read(into: buf)
-        if buf.frameLength == 0 { break }
-        all.append(contentsOf: AudioRecorder.convert(buf))
-    }
-    return all
-}
 
 // Nearest-rank percentile over a small sample. p in 0...1.
 func percentile(_ values: [Double], _ p: Double) -> Double {
@@ -91,7 +77,7 @@ for c in cases {
 
     let samples: [Float]
     do {
-        samples = try loadSamples(url: c.wav)
+        samples = try Eval.loadSamples(url: c.wav)
     } catch {
         print("FAIL \(name)")
         print("  error: could not read WAV: \(error)")
