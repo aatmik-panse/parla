@@ -62,6 +62,14 @@ public final class AudioRecorder {
         try engine.start()
     }
 
+    /// Copy of the samples captured so far, under the lock. Safe to call
+    /// mid-recording (the streaming loop polls this).
+    public func snapshot() -> [Float] {
+        lock.lock()
+        defer { lock.unlock() }
+        return samples
+    }
+
     public func stop() -> [Float] {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
