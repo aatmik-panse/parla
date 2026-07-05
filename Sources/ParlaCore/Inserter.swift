@@ -102,12 +102,23 @@ public enum Inserter {
         return result
     }
 
-    private static func classifyFocus() -> FocusTarget {
+    /// Focused element via the system-wide query, falling back to asking the
+    /// frontmost app directly — Electron/Chromium apps often answer only the
+    /// app-level query.
+    private static func focusedElement() -> AXUIElement? {
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let focused else { return .none }
-        let element = focused as! AXUIElement // AX always hands back an AXUIElement
+        if AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+           let focused { return (focused as! AXUIElement) }
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        let appEl = AXUIElementCreateApplication(app.processIdentifier)
+        if AXUIElementCopyAttributeValue(appEl, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+           let focused { return (focused as! AXUIElement) }
+        return nil
+    }
+
+    private static func classifyFocus() -> FocusTarget {
+        guard let element = focusedElement() else { return .none }
         var role: CFTypeRef?
         if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success,
            let role = role as? String,
@@ -125,5 +136,31 @@ public enum Inserter {
             return .editable
         }
         return .unknown
+    }
+
+    /// The focused field's full text and cursor position (UTF-16 offset), when
+    /// AX exposes both. nil means "can't see inside the field".
+    static func focusedFieldState() -> (text: NSString, cursor: Int)? {
+        guard let element = focusedElement() else { return nil }
+        var valueRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valueRef) == .success,
+              let text = valueRef as? String else { return nil }
+        var rangeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeRef) == .success,
+              let rangeRef, CFGetTypeID(rangeRef) == AXValueGetTypeID() else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(rangeRef as! AXValue, .cfRange, &range) else { return nil }
+        return (text as NSString, range.location)
+    }
+
+    /// True when the characters immediately before the cursor are exactly
+    /// `typed` — i.e. erasing that many keystrokes removes only our own text.
+    /// False when the field is opaque to AX (can't verify ⇒ don't erase).
+    public static func canEraseTyped(_ typed: String) -> Bool {
+        guard !typed.isEmpty else { return true }
+        guard let (text, cursor) = focusedFieldState() else { return false }
+        let len = (typed as NSString).length
+        guard cursor >= len, cursor <= text.length else { return false }
+        return text.substring(with: NSRange(location: cursor - len, length: len)) == typed
     }
 }

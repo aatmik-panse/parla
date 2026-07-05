@@ -53,6 +53,18 @@ public final class WhisperTranscriber {
                 text += String(cString: seg)
             }
         }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Self.stripNonSpeech(text.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// Whisper emits bracketed markers on non-speech audio — "[BLANK_AUDIO]",
+    /// "[MUSIC]", "(silence)", "*sigh*" — which must never be typed or pasted.
+    /// A transcript that is nothing but such markers becomes "".
+    public static func stripNonSpeech(_ text: String) -> String {
+        let wrapped = ["[": "]", "(": ")", "*": "*"]
+        let isMarker = { (word: Substring) -> Bool in
+            guard let first = word.first, let close = wrapped[String(first)] else { return false }
+            return word.hasSuffix(close) && word.count > 1
+        }
+        return text.split(separator: " ").allSatisfy(isMarker) ? "" : text
     }
 }

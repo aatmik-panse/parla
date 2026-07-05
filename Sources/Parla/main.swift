@@ -103,13 +103,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let result = await pipeline.process(samples: samples)
         await MainActor.run {
             let typedCount = self.typed.count // graphemes streamed live so far
+            NSLog("Parla finish: result=%@ live=%d focus=%d typed=%d",
+                  result ?? "<nil>", live ? 1 : 0, focus == .none ? 0 : 1, typedCount)
             if let text = result {
                 switch (live, focus) {
-                case (true, _):
+                case (true, _) where typedCount == 0 || Inserter.canEraseTyped(self.typed):
                     // Replace the live-typed text wholesale with the cleaned final.
                     Inserter.typeBackspaces(typedCount)
                     Inserter.insert(text)
                     hud.show(.done)
+                case (true, _):
+                    // Can't prove the field still ends with our streamed text —
+                    // leave it in place and offer the cleaned version instead.
+                    Inserter.copy(text)
+                    hud.show(.copied)
                 case (false, .unknown), (false, .editable):
                     Inserter.insert(text) // focus we couldn't stream into: paste at cursor
                     hud.show(.done)
@@ -118,8 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     hud.show(.copied)
                 }
             } else {
-                // Empty transcript: undo anything we streamed, stay quiet.
-                Inserter.typeBackspaces(typedCount)
+                // Empty transcript: undo anything we streamed — only if verified ours.
+                if typedCount > 0 && Inserter.canEraseTyped(self.typed) {
+                    Inserter.typeBackspaces(typedCount)
+                }
                 hud.hide()
             }
             self.typed = ""
@@ -146,6 +155,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let text = transcriber.transcribe(snap, initialPrompt: prompt)
             await MainActor.run {
                 let d = LiveTyper.diff(typed: self.typed, new: text)
+                if d.erase > 0 && !Inserter.canEraseTyped(self.typed) {
+                    // Field is opaque or its tail no longer matches what we typed
+                    // (dropped keystroke, autocorrect, user moved the cursor).
+                    // Never risk deleting text that isn't ours: skip this revision.
+                    NSLog("Parla stream: revision skipped, tail unverified (erase %d)", d.erase)
+                    return
+                }
+                NSLog("Parla stream: %.1fs audio -> \"%@\" (erase %d, append \"%@\")",
+                      Double(snap.count) / 16_000, text, d.erase, d.append)
                 Inserter.typeBackspaces(d.erase)
                 Inserter.typeUnicode(d.append)
                 self.typed = text
