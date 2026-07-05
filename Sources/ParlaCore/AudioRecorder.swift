@@ -9,7 +9,18 @@ public final class AudioRecorder {
     private var samples: [Float] = []
     private let lock = NSLock()
 
+    /// Called with each converted buffer's RMS level. Fires on the audio
+    /// thread — callers must hop to main before touching UI.
+    public var onLevel: ((Float) -> Void)?
+
     public init() {}
+
+    /// Root-mean-square amplitude of samples; 0 for empty input.
+    public static func rms(_ samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return 0 }
+        let sumSq = samples.reduce(Float(0)) { $0 + $1 * $1 }
+        return (sumSq / Float(samples.count)).squareRoot()
+    }
 
     /// Convert any PCM buffer to 16kHz mono Float32 samples.
     public static func convert(_ buffer: AVAudioPCMBuffer) -> [Float] {
@@ -46,6 +57,7 @@ public final class AudioRecorder {
             self.lock.lock()
             self.samples.append(contentsOf: chunk)
             self.lock.unlock()
+            self.onLevel?(AudioRecorder.rms(chunk))
         }
         try engine.start()
     }
