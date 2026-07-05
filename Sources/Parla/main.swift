@@ -109,12 +109,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 switch (live, focus) {
                 case (true, _) where typedCount == 0 || Inserter.canEraseTyped(self.typed):
                     // Replace the live-typed text wholesale with the cleaned final.
+                    NSLog("Parla finish path: ax-verified replace")
                     Inserter.typeBackspaces(typedCount)
+                    Inserter.insert(text)
+                    hud.show(.done)
+                case (true, _) where Inserter.selectBackAndVerify(self.typed):
+                    // Opaque field: our streamed text is now the live selection —
+                    // pasting replaces exactly it.
+                    NSLog("Parla finish path: select-verified replace")
                     Inserter.insert(text)
                     hud.show(.done)
                 case (true, _):
                     // Can't prove the field still ends with our streamed text —
                     // leave it in place and offer the cleaned version instead.
+                    NSLog("Parla finish path: unverified, clipboard only")
                     Inserter.copy(text)
                     hud.show(.copied)
                 case (false, .unknown), (false, .editable):
@@ -126,8 +134,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             } else {
                 // Empty transcript: undo anything we streamed — only if verified ours.
-                if typedCount > 0 && Inserter.canEraseTyped(self.typed) {
-                    Inserter.typeBackspaces(typedCount)
+                if typedCount > 0 {
+                    if Inserter.canEraseTyped(self.typed) {
+                        Inserter.typeBackspaces(typedCount)
+                    } else if Inserter.selectBackAndVerify(self.typed) {
+                        Inserter.typeBackspaces(1) // delete the verified selection
+                    }
                 }
                 hud.hide()
             }
@@ -155,17 +167,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let text = transcriber.transcribe(snap, initialPrompt: prompt)
             await MainActor.run {
                 let d = LiveTyper.diff(typed: self.typed, new: text)
-                if d.erase > 0 && !Inserter.canEraseTyped(self.typed) {
-                    // Field is opaque or its tail no longer matches what we typed
-                    // (dropped keystroke, autocorrect, user moved the cursor).
-                    // Never risk deleting text that isn't ours: skip this revision.
+                NSLog("Parla stream: %.1fs audio -> \"%@\" (erase %d, append \"%@\")",
+                      Double(snap.count) / 16_000, text, d.erase, d.append)
+                if d.erase == 0 {
+                    Inserter.typeUnicode(d.append) // pure append: can't harm foreign text
+                } else if Inserter.canEraseTyped(self.typed) {
+                    Inserter.typeBackspaces(d.erase)
+                    Inserter.typeUnicode(d.append)
+                } else if Inserter.selectBackAndVerify(String(self.typed.suffix(d.erase))) {
+                    if d.append.isEmpty {
+                        Inserter.typeBackspaces(1) // pure shrink: delete the selection
+                    } else {
+                        Inserter.typeUnicode(d.append) // replaces the verified live selection
+                    }
+                } else {
+                    // Can't prove the tail is ours — never risk foreign text.
                     NSLog("Parla stream: revision skipped, tail unverified (erase %d)", d.erase)
                     return
                 }
-                NSLog("Parla stream: %.1fs audio -> \"%@\" (erase %d, append \"%@\")",
-                      Double(snap.count) / 16_000, text, d.erase, d.append)
-                Inserter.typeBackspaces(d.erase)
-                Inserter.typeUnicode(d.append)
                 self.typed = text
             }
             try? await Task.sleep(nanoseconds: 300_000_000)

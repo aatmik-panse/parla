@@ -163,4 +163,44 @@ public enum Inserter {
         guard cursor >= len, cursor <= text.length else { return false }
         return text.substring(with: NSRange(location: cursor - len, length: len)) == typed
     }
+
+    static func postKey(_ key: CGKeyCode, flags: CGEventFlags = []) {
+        let src = CGEventSource(stateID: .combinedSessionState)
+        if let down = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: true),
+           let up = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: false) {
+            down.flags = flags
+            up.flags = flags
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+        }
+    }
+
+    /// Verification for fields AX can't read: select the last `expected.count`
+    /// graphemes with ⇧← and copy them. Match ⇒ returns true with the selection
+    /// LEFT ACTIVE, so the very next typed/pasted text atomically replaces
+    /// exactly those characters and nothing else. Mismatch (or a field where
+    /// selection/copy doesn't work) ⇒ collapses the selection back to the end
+    /// and returns false. Clobbers the clipboard by design — Parla already
+    /// leaves dictated text there.
+    public static func selectBackAndVerify(_ expected: String) -> Bool {
+        guard !expected.isEmpty else { return true }
+        for _ in 0..<expected.count {
+            postKey(123, flags: .maskShift) // ⇧←
+            usleep(3_000)
+        }
+        usleep(30_000)
+        let pb = NSPasteboard.general
+        let before = pb.changeCount
+        postKey(8, flags: .maskCommand) // ⌘C
+        var waited = 0
+        while pb.changeCount == before, waited < 400_000 {
+            usleep(20_000)
+            waited += 20_000
+        }
+        if pb.changeCount != before, pb.string(forType: .string) == expected {
+            return true
+        }
+        postKey(124) // → collapse selection, cursor back to the end
+        return false
+    }
 }
