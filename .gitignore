@@ -3,3 +3,6 @@
 models/
 .DS_Store
 .superpowers/
+
+.env
+
