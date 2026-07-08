@@ -79,6 +79,28 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(s.dictionary, ["X"])
     }
 
+    func testLiveStreamingEnabledDefaultTrue() {
+        XCTAssertTrue(Settings().liveStreamingEnabled)
+    }
+
+    func testLiveStreamingEnabledTolerantDecode() throws {
+        let missing = try JSONDecoder().decode(Settings.self, from: Data(#"{"dictionary":["X"]}"#.utf8))
+        XCTAssertTrue(missing.liveStreamingEnabled)
+        let off = try JSONDecoder().decode(Settings.self, from: Data(#"{"liveStreamingEnabled":false}"#.utf8))
+        XCTAssertFalse(off.liveStreamingEnabled)
+    }
+
+    func testRestoreClipboardDefaultFalse() {
+        XCTAssertFalse(Settings().restoreClipboard)
+    }
+
+    func testRestoreClipboardTolerantDecode() throws {
+        let missing = try JSONDecoder().decode(Settings.self, from: Data(#"{"dictionary":["X"]}"#.utf8))
+        XCTAssertFalse(missing.restoreClipboard)
+        let on = try JSONDecoder().decode(Settings.self, from: Data(#"{"restoreClipboard":true}"#.utf8))
+        XCTAssertTrue(on.restoreClipboard)
+    }
+
     func testCleanupBlockRoundTrip() throws {
         let store = tempStore()
         var s = Settings()

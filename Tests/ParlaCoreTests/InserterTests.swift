@@ -40,4 +40,21 @@ final class InserterTests: XCTestCase {
         let chunks = Inserter.chunkUTF16(units)
         assertValidChunks(chunks, reproduce: units)
     }
+
+    func testAXCenterToAppKitFlipsYThroughPrimaryScreenHeight() {
+        // AX top-left origin (10, 20), size 100x50, on a 900pt-tall primary screen.
+        // Center in AX space is (60, 45); AppKit y = 900 - 45 = 855.
+        let p = Inserter.axCenterToAppKit(origin: CGPoint(x: 10, y: 20), size: CGSize(width: 100, height: 50),
+                                           primaryScreenHeight: 900)
+        XCTAssertEqual(p.x, 60)
+        XCTAssertEqual(p.y, 855)
+    }
+
+    func testAXCenterToAppKitAtScreenTopLandsNearBottom() {
+        // An element flush against the AX origin (top-left of the primary screen)
+        // must land near the bottom of AppKit space, not the top.
+        let p = Inserter.axCenterToAppKit(origin: .zero, size: CGSize(width: 10, height: 10),
+                                           primaryScreenHeight: 1080)
+        XCTAssertEqual(p.y, 1075) // 1080 - 5
+    }
 }

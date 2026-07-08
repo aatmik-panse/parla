@@ -1,4 +1,5 @@
 import AppKit
+import ParlaCore
 
 /// Floating pill shown while dictating. All methods are main-thread only.
 // ponytail: @unchecked Sendable — main-thread-only by contract, lets async
@@ -141,12 +142,29 @@ final class HUD: @unchecked Sendable {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: item)
     }
 
+    /// Positions on the screen the user is actually working on, not always
+    /// NSScreen.main — only called from show(.listening), i.e. once per
+    /// fn-down, so the pill never jumps mid-dictation.
     private func position() {
-        guard let screen = NSScreen.main else { return }
+        guard let screen = Self.activeScreen() else { return }
         let f = panel.frame
         let x = screen.frame.midX - f.width / 2
         let y = screen.frame.minY + 80
         panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    /// Screen to show on, in order: the AX-focused element's screen (where the
+    /// user is dictating into), else the screen under the mouse, else main.
+    private static func activeScreen() -> NSScreen? {
+        if let p = Inserter.focusedElementScreenPoint(),
+           let s = NSScreen.screens.first(where: { $0.frame.contains(p) }) {
+            return s
+        }
+        let mouse = NSEvent.mouseLocation
+        if let s = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) {
+            return s
+        }
+        return NSScreen.main
     }
 }
 

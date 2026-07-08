@@ -29,6 +29,19 @@ public enum Inserter {
         pb.setString(text, forType: .string)
     }
 
+    /// Put the clipboard back to a prior snapshot (opt-in restoreClipboard
+    /// setting). nil snapshot = the prior content wasn't a plain string (an
+    /// image, or empty) — leave the clipboard alone rather than destroy it;
+    /// the dictated text stays there as the escape hatch.
+    // ponytail: string-only snapshots; preserve full pasteboard items if
+    // anyone dictates mid image-paste workflow.
+    public static func restore(_ text: String?) {
+        guard let text else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+    }
+
     static func postCmdV() {
         let src = CGEventSource(stateID: .combinedSessionState)
         let vKey: CGKeyCode = 9
@@ -186,6 +199,34 @@ public enum Inserter {
     /// live streaming that later falls back to clipboard.
     public static func canVerifyFocusedField() -> Bool {
         focusedFieldState() != nil
+    }
+
+    /// Center of the focused AX element, converted to AppKit's bottom-left-origin
+    /// screen space — for picking which NSScreen to show UI on. nil when AX can't
+    /// report position/size (no focus, opaque element, permission denied).
+    public static func focusedElementScreenPoint() -> NSPoint? {
+        guard let element = focusedElement() else { return nil }
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let posRef, let sizeRef,
+              CFGetTypeID(posRef) == AXValueGetTypeID(), CFGetTypeID(sizeRef) == AXValueGetTypeID(),
+              let primaryHeight = NSScreen.screens.first?.frame.height
+        else { return nil }
+        var pos = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(posRef as! AXValue, .cgPoint, &pos),
+              AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+        else { return nil }
+        return axCenterToAppKit(origin: pos, size: size, primaryScreenHeight: primaryHeight)
+    }
+
+    /// Pure coordinate math, split out for testability: AX reports top-left-origin
+    /// global coordinates anchored to the primary (menu-bar) screen; AppKit wants
+    /// bottom-left-origin — flip through that screen's height.
+    static func axCenterToAppKit(origin: CGPoint, size: CGSize, primaryScreenHeight: CGFloat) -> NSPoint {
+        NSPoint(x: origin.x + size.width / 2, y: primaryScreenHeight - (origin.y + size.height / 2))
     }
 
     static func postKey(_ key: CGKeyCode, flags: CGEventFlags = []) {

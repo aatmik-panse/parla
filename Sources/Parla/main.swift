@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import ParlaCore
+import ServiceManagement
 
 /// Subtle system-sound cues. NSSound(named:) uses the bundled ~/Library sounds —
 /// no audio framework. ponytail: fire-and-forget; a nil name just no-ops.
@@ -73,7 +74,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // focused fields still get the final paste; no focus is
                 // clipboard-only (see finish).
                 self.focus = Inserter.focusTarget()
-                self.liveTyping = self.focus == .editable && Inserter.canVerifyFocusedField()
+                // ponytail: store.load() here re-reads settings.json on every
+                // fn-down (a file read at keypress cadence) — fine, simplest
+                // way to pick up a live liveStreamingEnabled toggle immediately.
+                self.liveTyping = self.store.load().liveStreamingEnabled
+                    && self.focus == .editable && Inserter.canVerifyFocusedField()
                 if self.liveTyping, let transcriber = self.transcriber {
                     // Chain onto the previous finish so partial passes never run
                     // concurrently with the final pass (whisper ctx isn't reentrant).
@@ -104,6 +109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Snapshot the app name too: cleanup is async and the user may
                 // switch apps before it resolves, so grab it while it's current.
                 let appName = NSWorkspace.shared.frontmostApplication?.localizedName
+                // Snapshot the clipboard now too, before Parla's own pipeline
+                // touches it (raw copy, cleaned copy, select-back-and-verify's
+                // probe markers). Cheap read; finish() decides whether the
+                // opt-in restoreClipboard setting actually uses it.
+                let clipboardSnapshot = NSPasteboard.general.string(forType: .string)
                 self.setStatus("…")
                 self.hud.show(.transcribing)
                 // Chain onto the previous work (any in-flight streaming pass):
@@ -111,7 +121,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // dictation order.
                 self.processTask = Task { [prev = self.processTask] in
                     await prev?.value
-                    await self.finish(samples: samples, live: live, focus: focus, gen: gen, bundleID: bundleID, appName: appName)
+                    await self.finish(samples: samples, live: live, focus: focus, gen: gen, bundleID: bundleID,
+                                       appName: appName, clipboardSnapshot: clipboardSnapshot)
                 }
             case .cancel:
                 // A real key was pressed while fn was held (fn+arrow, Esc): abort.
@@ -153,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setStatus(idleIcon)
     }
 
-    func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget, gen: Int, bundleID: String?, appName: String?) async {
+    func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget, gen: Int, bundleID: String?, appName: String?, clipboardSnapshot: String?) async {
         let hud = self.hud // bind so main-queue hops don't capture non-Sendable self
         defer {
             DispatchQueue.main.async {
@@ -318,6 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             case .field:
                 guard let plan else { // polish was a no-op: either cleanup failed, or the LLM agreed raw was fine
+                    if !cleanResult.failed, settings.restoreClipboard { Inserter.restore(clipboardSnapshot) }
                     hud.show(cleanResult.failed ? .rawFallback : .done)
                     return
                 }
@@ -326,6 +338,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     Inserter.typeBackspaces(plan.eraseTail.count)
                     Inserter.typeUnicode(plan.replacement)
                     Inserter.copy(cleaned) // escape-hatch invariant: full final text in the clipboard
+                    // Opt-in: the point of restoreClipboard is to replace that
+                    // escape-hatch copy with whatever the user had before, now
+                    // that the swap is verified to have landed in-field.
+                    if settings.restoreClipboard { Inserter.restore(clipboardSnapshot) }
                     hud.show(.done)
                 } else if Inserter.selectBackAndVerify(plan.eraseTail) {
                     NSLog("Parla swap path: select-verified tail swap (erase %d)", plan.eraseTail.count)
@@ -335,6 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         Inserter.typeUnicode(plan.replacement) // replaces the live selection
                     }
                     Inserter.copy(cleaned)
+                    if settings.restoreClipboard { Inserter.restore(clipboardSnapshot) }
                     hud.show(.done)
                 } else {
                     // User clicked away or typed — leave the raw text alone.
@@ -560,6 +577,12 @@ extension AppDelegate: NSMenuDelegate {
         menu.addItem(permissionItem(name: "Accessibility", granted: axGranted, pane: "Privacy_Accessibility"))
         menu.addItem(.separator())
 
+        let launch = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        launch.target = self
+        launch.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(launch)
+        menu.addItem(.separator())
+
         let open = NSMenuItem(title: "Open Settings File", action: #selector(openSettings), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
@@ -620,6 +643,23 @@ extension AppDelegate: NSMenuDelegate {
     }
 
     @objc func clearHistory() { history.clear() }
+
+    /// SMAppService registration only works from the installed .app bundle
+    /// (Info.plist + code signature). ponytail: running via `swift run` still
+    /// shows the toggle, it'll just log-and-HUD the thrown error instead of
+    /// crashing — fine for dev, real usage is always the bundled app.
+    @objc func toggleLaunchAtLogin() {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            NSLog("Parla: launch-at-login toggle failed: \(error)")
+            hud.show(.error("Launch at Login failed"))
+        }
+    }
 
     /// Menu actions fire once the menu has dismissed, but focus handoff back to
     /// the previous app can lag the click — a paste landing too early hits
