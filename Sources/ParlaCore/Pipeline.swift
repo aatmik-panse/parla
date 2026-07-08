@@ -26,21 +26,22 @@ public struct Pipeline {
     }
 
     /// LLM cleanup, sanitized. Never throws — cleanup must never kill a
-    /// dictation, so failures hand back the raw transcript.
-    public func clean(transcript: String) async -> String {
+    /// dictation, so failures hand back the raw transcript with `failed: true`
+    /// so the caller can tell the user why nothing changed.
+    public func clean(transcript: String) async -> (text: String, failed: Bool) {
         let s = settings()
         let ctx = CleanupContext(dictionary: s.dictionary, snippets: s.snippets,
                                  appName: frontAppName())
         do {
-            return CleanupSanitizer.sanitize(try await cleanup(transcript, ctx))
+            return (CleanupSanitizer.sanitize(try await cleanup(transcript, ctx)), false)
         } catch {
             NSLog("Parla cleanup failed, keeping raw transcript: \(error)")
-            return transcript
+            return (transcript, true)
         }
     }
 
     public func process(samples: [Float]) async -> String? {
         guard let t = transcript(samples: samples) else { return nil }
-        return await clean(transcript: t)
+        return await clean(transcript: t).text
     }
 }

@@ -41,6 +41,22 @@ final class PipelineTests: XCTestCase {
         XCTAssertEqual(out, "raw words")
     }
 
+    func testCleanReportsFailureOnThrow() async {
+        let p = makePipeline(transcript: "raw words") { _, _ in
+            throw CleanupError(description: "boom")
+        }
+        let result = await p.clean(transcript: "raw words")
+        XCTAssertEqual(result.text, "raw words")
+        XCTAssertTrue(result.failed)
+    }
+
+    func testCleanReportsSuccess() async {
+        let p = makePipeline(transcript: "raw words") { t, _ in "Raw words." }
+        let result = await p.clean(transcript: "raw words")
+        XCTAssertEqual(result.text, "Raw words.")
+        XCTAssertFalse(result.failed)
+    }
+
     func testEmptyTranscriptReturnsNil() async {
         let p = makePipeline(transcript: "  ") { t, _ in t }
         let out = await p.process(samples: [0.1])

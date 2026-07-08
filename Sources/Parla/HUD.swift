@@ -11,6 +11,7 @@ final class HUD: @unchecked Sendable {
         case done
         case copied
         case cleanedCopied  // swap unverifiable; cleaned text parked in the clipboard
+        case rawFallback    // cleanup call failed; raw transcript is final, no swap attempted
         case cancelled      // dictation aborted (key pressed while fn held)
         case error(String)
     }
@@ -103,6 +104,12 @@ final class HUD: @unchecked Sendable {
             dot.isHidden = true
             waveform.isHidden = true
             label.stringValue = "✓ cleaned in clipboard"
+            panel.orderFrontRegardless()
+            scheduleHide()
+        case .rawFallback:
+            dot.isHidden = true
+            waveform.isHidden = true
+            label.stringValue = "✓ raw (cleanup failed)"
             panel.orderFrontRegardless()
             scheduleHide()
         case .cancelled:

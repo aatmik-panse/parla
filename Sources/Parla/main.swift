@@ -35,6 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Confirmed-prefix window for long dictations: written by stream(), consumed
     // by the finish() queued right after it — the processTask chain serializes.
     var window: StreamWindow?
+    // Model download-in-progress state (feature 4): non-nil task means the menu
+    // shows a disabled "Downloading…" item instead of the download action.
+    var downloadTask: URLSessionDownloadTask?
+    var downloadObservation: NSKeyValueObservation?
 
     /// Where the instant raw finalize landed — decides how the cleaned swap applies.
     enum Landing: Sendable { case field, clipboard }
@@ -142,7 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if silent { hud.hide() } else { hud.show(.cancelled) }
             }
         }
-        setStatus(transcriber == nil ? "⚠️" : "🎤")
+        setStatus(idleIcon)
     }
 
     func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget, gen: Int, bundleID: String?) async {
@@ -150,9 +154,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         defer {
             DispatchQueue.main.async {
                 // Don't stamp over an active recording, and keep ⚠️ visible
-                // while there's no model.
+                // while there's no model / settings are broken / permissions missing.
                 guard !self.isRecording else { return }
-                self.setStatus(self.transcriber == nil ? "⚠️" : "🎤")
+                self.setStatus(self.idleIcon)
             }
         }
         guard let transcriber else {
@@ -281,11 +285,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Async polish: cleanup, then swap raw → cleaned with the same
         // verification machinery. Still on the processTask chain, so a queued
         // next dictation starts only after this resolves (insertion order holds).
-        let cleanedRaw = await pipeline.clean(transcript: raw)
+        let cleanResult = await pipeline.clean(transcript: raw)
         // Same terminal guard on the cleaned text — it replaces insertText in the
         // field, so it must be flattened too, and the plan must diff flattened vs
         // flattened (insertText) or the erase/verify counts won't match the field.
-        let cleaned = TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(cleanedRaw) : cleanedRaw
+        let cleaned = TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(cleanResult.text) : cleanResult.text
         await MainActor.run {
             let plan = LiveTyper.swapPlan(raw: insertText, cleaned: cleaned)
             guard gen == self.generation else {
@@ -304,12 +308,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // raw → cleaned, unless the user copied something meanwhile.
                 if NSPasteboard.general.string(forType: .string) == insertText {
                     if plan != nil { Inserter.copy(cleaned) }
-                    hud.show(.copied)
+                    hud.show(cleanResult.failed ? .rawFallback : .copied)
                 } else {
                     hud.hide() // clipboard is the user's now — never clobber
                 }
             case .field:
-                guard let plan else { hud.show(.done); return } // polish was a no-op
+                guard let plan else { // polish was a no-op: either cleanup failed, or the LLM agreed raw was fine
+                    hud.show(cleanResult.failed ? .rawFallback : .done)
+                    return
+                }
                 if Inserter.canEraseTyped(insertText) {
                     NSLog("Parla swap path: ax-verified tail swap (erase %d)", plan.eraseTail.count)
                     Inserter.typeBackspaces(plan.eraseTail.count)
@@ -406,7 +413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func loadModel() {
         let path = store.load().whisperModelPath ?? WhisperTranscriber.defaultModelPath()
         transcriber = try? WhisperTranscriber(modelPath: path)
-        if transcriber == nil { setStatus("⚠️") }
+        setStatus(idleIcon)
     }
 
     func requestPermissions() {
@@ -419,22 +426,142 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    var micGranted: Bool { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
+    var axGranted: Bool { AXIsProcessTrusted() }
+
+    /// Idle menu-bar glyph: ⚠️ if anything needs the user's attention (no model,
+    /// broken settings.json, missing permission), else the plain mic icon.
+    /// store.lastError reflects the most recent load() — refreshed at launch
+    /// and on every dictation (finish() reloads settings each time).
+    var idleIcon: String {
+        (transcriber != nil && store.lastError == nil && micGranted && axGranted) ? "🎤" : "⚠️"
+    }
+
     func setStatus(_ s: String) { statusItem.button?.title = s }
 
     func buildMenu() {
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Hold fn 🌐 to dictate", action: nil, keyEquivalent: ""))
-        menu.addItem(.separator())
-        let open = NSMenuItem(title: "Open Settings File", action: #selector(openSettings), keyEquivalent: "")
-        open.target = self
-        menu.addItem(open)
-        menu.addItem(NSMenuItem(title: "Quit Parla", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.delegate = self
         statusItem.menu = menu
     }
 
     @objc func openSettings() {
-        try? store.save(store.load()) // ensure the file exists with defaults
+        // Only seed defaults when there's no file yet — never overwrite a
+        // broken settings.json the user is about to fix (that's their typo'd
+        // API key / dictionary, don't discard it).
+        if !FileManager.default.fileExists(atPath: store.url.path) {
+            try? store.save(store.load())
+        }
         NSWorkspace.shared.open(store.url)
+    }
+
+    @objc func openPrivacyPane(_ sender: NSMenuItem) {
+        guard let pane = sender.representedObject as? String,
+              let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")
+        else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Kicks off the base.en download; menuNeedsUpdate hides this action while
+    /// downloadTask is non-nil so a second click can't start a duplicate.
+    @objc func downloadModel() {
+        guard downloadTask == nil,
+              let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin")
+        else { return }
+        setStatus("⬇️ 0%")
+        let task = URLSession.shared.downloadTask(with: url) { [weak self] tmp, _, error in
+            // The tmp file is deleted the moment this handler returns — move it
+            // to its destination NOW, before hopping to main for the UI.
+            let moveError: Error? = error ?? tmp.flatMap { Self.installModel(from: $0) }
+            DispatchQueue.main.async { self?.finishDownload(error: moveError ?? (tmp == nil ? CleanupError(description: "no file") : nil)) }
+        }
+        // KVO on the task's own Progress — least code for a live percentage,
+        // no delegate class needed.
+        downloadObservation = task.progress.observe(\.fractionCompleted, options: [.new]) { [weak self] progress, _ in
+            DispatchQueue.main.async { self?.setStatus("⬇️ \(Int(progress.fractionCompleted * 100))%") }
+        }
+        downloadTask = task
+        task.resume()
+    }
+
+    /// Move the downloaded model into place. Runs on the URLSession callback
+    /// queue (must complete before the completion handler returns). nil = ok.
+    private static func installModel(from tmp: URL) -> Error? {
+        do {
+            let dest = URL(fileURLWithPath: WhisperTranscriber.defaultModelPath())
+            try FileManager.default.createDirectory(
+                at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.removeItem(at: dest) }
+            try FileManager.default.moveItem(at: tmp, to: dest)
+            return nil
+        } catch { return error }
+    }
+
+    private func finishDownload(error: Error?) {
+        downloadObservation = nil
+        downloadTask = nil
+        if let error {
+            NSLog("Parla model download failed: \(error)")
+            hud.show(.error("Model download failed"))
+            setStatus(idleIcon)
+            return
+        }
+        loadModel() // clears the ⚠️ when it succeeds (setStatus(idleIcon) inside)
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    /// Rebuilt from scratch right before the menu shows, so permission/model/
+    /// settings status is always current — cheaper than tracking diffs.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        menu.addItem(NSMenuItem(title: "Hold fn 🌐 to dictate", action: nil, keyEquivalent: ""))
+        menu.addItem(.separator())
+
+        if transcriber == nil {
+            if downloadTask != nil {
+                let item = NSMenuItem(title: "Downloading base.en…", action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                menu.addItem(item)
+            } else {
+                let item = NSMenuItem(title: "Download model (base.en, ~148 MB)",
+                                       action: #selector(downloadModel), keyEquivalent: "")
+                item.target = self
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+        }
+
+        if let error = store.lastError {
+            let item = NSMenuItem(title: "⚠️ settings.json invalid — click to open",
+                                   action: #selector(openSettings), keyEquivalent: "")
+            item.target = self
+            item.toolTip = error
+            menu.addItem(item)
+            menu.addItem(.separator())
+        }
+
+        menu.addItem(permissionItem(name: "Microphone", granted: micGranted, pane: "Privacy_Microphone"))
+        menu.addItem(permissionItem(name: "Accessibility", granted: axGranted, pane: "Privacy_Accessibility"))
+        menu.addItem(.separator())
+
+        let open = NSMenuItem(title: "Open Settings File", action: #selector(openSettings), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+        menu.addItem(NSMenuItem(title: "Quit Parla", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+
+        setStatus(idleIcon) // menu open is a free moment to reconcile the icon too
+    }
+
+    private func permissionItem(name: String, granted: Bool, pane: String) -> NSMenuItem {
+        guard !granted else {
+            return NSMenuItem(title: "\(name): ✓ granted", action: nil, keyEquivalent: "")
+        }
+        let item = NSMenuItem(title: "⚠️ \(name): not granted — click to open settings",
+                               action: #selector(openPrivacyPane(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = pane
+        return item
     }
 }
 

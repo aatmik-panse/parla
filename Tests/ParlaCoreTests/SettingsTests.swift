@@ -9,10 +9,12 @@ final class SettingsTests: XCTestCase {
     }
 
     func testDefaultsWhenFileMissing() {
-        let s = tempStore().load()
+        let store = tempStore()
+        let s = store.load()
         XCTAssertEqual(s.cleanupModel, "claude-haiku-4-5")
         XCTAssertTrue(s.dictionary.isEmpty)
         XCTAssertTrue(s.snippets.isEmpty)
+        XCTAssertNil(store.lastError) // missing file is fine, not an error
     }
 
     func testRoundTrip() throws {
@@ -22,14 +24,29 @@ final class SettingsTests: XCTestCase {
         s.snippets = ["insert my calendar link": "https://cal.com/daksh"]
         try store.save(s)
         XCTAssertEqual(store.load(), s)
+        XCTAssertNil(store.lastError)
     }
 
-    func testCorruptFileFallsBackToDefaults() throws {
+    func testCorruptFileFallsBackToDefaultsAndReportsError() throws {
         let store = tempStore()
         try FileManager.default.createDirectory(
             at: store.url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("not json".utf8).write(to: store.url)
         XCTAssertEqual(store.load(), Settings())
+        XCTAssertNotNil(store.lastError)
+        XCTAssertFalse(store.lastError!.contains("\n")) // trimmed to one line for menu display
+    }
+
+    func testErrorClearsOnNextGoodLoad() throws {
+        let store = tempStore()
+        try FileManager.default.createDirectory(
+            at: store.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("not json".utf8).write(to: store.url)
+        _ = store.load()
+        XCTAssertNotNil(store.lastError)
+        try store.save(Settings())
+        _ = store.load()
+        XCTAssertNil(store.lastError)
     }
 
     func testPartialFileDecodesWithDefaults() throws {

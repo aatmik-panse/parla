@@ -45,6 +45,9 @@ public struct Settings: Codable, Equatable {
 
 public final class SettingsStore {
     public let url: URL
+    /// Set by load() when settings.json exists but failed to parse. nil means
+    /// either no file (fine, defaults) or the last load succeeded.
+    public private(set) var lastError: String?
 
     public init(url: URL? = nil) {
         self.url = url ?? FileManager.default
@@ -53,10 +56,22 @@ public final class SettingsStore {
     }
 
     public func load() -> Settings {
-        guard let data = try? Data(contentsOf: url),
-              let s = try? JSONDecoder().decode(Settings.self, from: data)
-        else { return Settings() }
-        return s
+        lastError = nil
+        guard let data = try? Data(contentsOf: url) else { return Settings() } // no file: fine, defaults
+        do {
+            return try JSONDecoder().decode(Settings.self, from: data)
+        } catch {
+            lastError = Self.hint(error)
+            return Settings()
+        }
+    }
+
+    /// One-line, length-capped summary of a decode error — shown as a menu item
+    /// title, so it must stay short even if DecodingError's description is huge.
+    private static func hint(_ error: Error) -> String {
+        let desc = String(describing: error)
+        let line = desc.split(separator: "\n", maxSplits: 1).first ?? "unreadable settings.json"
+        return String(line.prefix(200))
     }
 
     public func save(_ settings: Settings) throws {
