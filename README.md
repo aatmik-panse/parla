@@ -6,14 +6,21 @@ model, and typed into whatever app you're using. Hold **⇧+fn** instead with
 text selected to speak an edit instruction and transform the selection in
 place (see Command mode below).
 
-## First run
+## Running it
+
+Prerequisites: macOS 13.3+ and Xcode (or the Command Line Tools) with Swift 5.9+.
 
 ```sh
-scripts/download-model.sh          # fetch a whisper model (default: base.en)
+scripts/download-model.sh          # fetch a whisper model (default: base.en; also takes tiny.en / large-v3-turbo)
 export ANTHROPIC_API_KEY=sk-ant-…  # optional; used for transcript cleanup
-scripts/make-app.sh                # build + bundle Parla.app
+scripts/make-app.sh                # swift build -c release + bundle Parla.app
 open Parla.app
 ```
+
+Skipping the first step is fine — the menu bar offers a one-click
+**Download model (base.en)** on launch. After code changes, quit Parla (menu >
+Quit), re-run `scripts/make-app.sh`, and `open Parla.app` again; permission
+grants survive rebuilds (the bundle is signed with a stable identifier).
 
 Transcription runs on a vendored whisper.cpp v1.9.1 xcframework with Metal GPU
 active by default; `make-app.sh` bundles `whisper.framework` into
