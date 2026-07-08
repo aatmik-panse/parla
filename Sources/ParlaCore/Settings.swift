@@ -27,6 +27,9 @@ public struct Settings: Codable, Equatable {
     public var anthropicApiKey: String? = nil
     public var whisperModelPath: String? = nil
     public var cleanup: CleanupSettings = CleanupSettings()
+    // Local-only dictation history (menu paste-last / Recent). Never leaves the
+    // machine; secure-field dictations are never recorded regardless.
+    public var historyEnabled: Bool = true
     public init() {}
 
     // Tolerant decode: missing keys fall back to defaults so adding fields
@@ -40,6 +43,7 @@ public struct Settings: Codable, Equatable {
         anthropicApiKey = try c.decodeIfPresent(String.self, forKey: .anthropicApiKey) ?? anthropicApiKey
         whisperModelPath = try c.decodeIfPresent(String.self, forKey: .whisperModelPath) ?? whisperModelPath
         cleanup = try c.decodeIfPresent(CleanupSettings.self, forKey: .cleanup) ?? cleanup
+        historyEnabled = try c.decodeIfPresent(Bool.self, forKey: .historyEnabled) ?? historyEnabled
     }
 }
 

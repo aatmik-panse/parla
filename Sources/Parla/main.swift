@@ -18,6 +18,7 @@ enum Sound {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let store = SettingsStore()
+    let history = HistoryStore()
     let hotkey = HotkeyMonitor()
     let recorder = AudioRecorder()
     let hud = HUD()
@@ -100,6 +101,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Snapshot the frontmost app ONCE here: terminal newline-flattening
                 // must use the same target for the raw finalize and the async swap.
                 let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                // Snapshot the app name too: cleanup is async and the user may
+                // switch apps before it resolves, so grab it while it's current.
+                let appName = NSWorkspace.shared.frontmostApplication?.localizedName
                 self.setStatus("…")
                 self.hud.show(.transcribing)
                 // Chain onto the previous work (any in-flight streaming pass):
@@ -107,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // dictation order.
                 self.processTask = Task { [prev = self.processTask] in
                     await prev?.value
-                    await self.finish(samples: samples, live: live, focus: focus, gen: gen, bundleID: bundleID)
+                    await self.finish(samples: samples, live: live, focus: focus, gen: gen, bundleID: bundleID, appName: appName)
                 }
             case .cancel:
                 // A real key was pressed while fn was held (fn+arrow, Esc): abort.
@@ -149,7 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setStatus(idleIcon)
     }
 
-    func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget, gen: Int, bundleID: String?) async {
+    func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget, gen: Int, bundleID: String?, appName: String?) async {
         let hud = self.hud // bind so main-queue hops don't capture non-Sendable self
         defer {
             DispatchQueue.main.async {
@@ -339,6 +343,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     hud.show(.cleanedCopied)
                 }
             }
+        }
+
+        // Record once per dictation (secure fields returned above; raw is
+        // non-nil past the guard). cleaned is dropped when cleanup failed or
+        // matched raw. Append on main to serialize with menu reads/Clear.
+        if settings.historyEnabled {
+            let cleanedForHistory = (!cleanResult.failed && cleanResult.text != raw) ? cleanResult.text : nil
+            let entry = HistoryEntry(raw: raw, cleaned: cleanedForHistory, appName: appName)
+            DispatchQueue.main.async { self.history.append(entry) }
         }
     }
 
@@ -541,6 +554,8 @@ extension AppDelegate: NSMenuDelegate {
             menu.addItem(.separator())
         }
 
+        addHistoryItems(to: menu)
+
         menu.addItem(permissionItem(name: "Microphone", granted: micGranted, pane: "Privacy_Microphone"))
         menu.addItem(permissionItem(name: "Accessibility", granted: axGranted, pane: "Privacy_Accessibility"))
         menu.addItem(.separator())
@@ -551,6 +566,67 @@ extension AppDelegate: NSMenuDelegate {
         menu.addItem(NSMenuItem(title: "Quit Parla", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         setStatus(idleIcon) // menu open is a free moment to reconcile the icon too
+    }
+
+    /// "Paste Last Dictation" + a "Recent" submenu (up to 8, newest first) with
+    /// a "Clear History" action. Nil action ⇒ auto-disabled when empty.
+    private func addHistoryItems(to menu: NSMenu) {
+        let entries = history.entries
+        let pasteLast = NSMenuItem(title: "Paste Last Dictation",
+                                    action: entries.isEmpty ? nil : #selector(pasteLastDictation),
+                                    keyEquivalent: "")
+        pasteLast.target = self
+        menu.addItem(pasteLast)
+
+        let recent = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        if entries.isEmpty {
+            let none = NSMenuItem(title: "No dictations yet", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            sub.addItem(none)
+        } else {
+            for entry in entries.prefix(8) {
+                let item = NSMenuItem(title: Self.menuTitle(entry.best),
+                                       action: #selector(pasteRecent(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = entry.best
+                item.toolTip = entry.appName
+                sub.addItem(item)
+            }
+            sub.addItem(.separator())
+            let clear = NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: "")
+            clear.target = self
+            sub.addItem(clear)
+        }
+        recent.submenu = sub
+        menu.addItem(recent)
+        menu.addItem(.separator())
+    }
+
+    /// First non-empty line of `text`, capped ~40 chars with an ellipsis.
+    static func menuTitle(_ text: String) -> String {
+        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        return line.count > 40 ? String(line.prefix(40)) + "…" : line
+    }
+
+    @objc func pasteLastDictation() {
+        guard let best = history.entries.first?.best else { return }
+        insertFromMenu(best)
+    }
+
+    @objc func pasteRecent(_ sender: NSMenuItem) {
+        guard let text = sender.representedObject as? String else { return }
+        insertFromMenu(text)
+    }
+
+    @objc func clearHistory() { history.clear() }
+
+    /// Menu actions fire once the menu has dismissed, but focus handoff back to
+    /// the previous app can lag the click — a paste landing too early hits
+    /// nothing. Delay a beat. insert() sets the clipboard first regardless, so
+    /// worst case the text is still there to paste by hand.
+    private func insertFromMenu(_ text: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { Inserter.insert(text) }
     }
 
     private func permissionItem(name: String, granted: Bool, pane: String) -> NSMenuItem {
