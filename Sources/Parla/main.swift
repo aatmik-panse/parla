@@ -31,6 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var liveTyping = false
     var focus = Inserter.FocusTarget.none
     var typed = ""
+    // Command mode (⇧+fn): transform the selection captured at fn-down instead of
+    // dictating. Latched at fn-down, read at fn-up like liveTyping/focus.
+    var commandMode = false
+    var commandSelection = ""
     // Bumped on every fn-down; a pending cleaned-swap compares its captured
     // value on the main actor and never fires keystrokes into a newer session.
     var generation = 0
@@ -59,12 +63,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             NSLog("Parla: fn edge %@", "\(edge)")
             switch edge {
-            case .down:
+            case .down(let command):
+                if command {
+                    // Command mode: capture the selection NOW; refuse early (no
+                    // recording) when there's nothing safe to transform.
+                    let focus = Inserter.focusTarget()
+                    guard focus != .secure else {
+                        self.hud.show(.error("No transforms in password fields")); return
+                    }
+                    guard let selection = Inserter.selectedText() else {
+                        self.hud.show(.error("Select text first")); return
+                    }
+                    self.generation += 1 // invalidates any pending cleaned-swap
+                    self.commandMode = true
+                    self.commandSelection = selection
+                    self.focus = focus
+                    self.liveTyping = false // never stream a transform
+                    do { try self.recorder.start() }
+                    catch {
+                        self.setStatus("⚠️"); self.hud.show(.error("Mic failed"))
+                        NSLog("Parla mic start failed: \(error)"); return
+                    }
+                    self.isRecording = true
+                    self.setStatus("🔴"); self.hud.show(.listening(command: true)); Sound.start()
+                    return
+                }
+                self.commandMode = false
                 self.generation += 1 // invalidates any pending cleaned-swap
                 self.isRecording = true
                 // typed is NOT reset here: a still-queued finish from the previous
                 // dictation must see it to erase that dictation's live text.
-                do { try self.recorder.start(); self.setStatus("🔴"); self.hud.show(.listening); Sound.start() }
+                do { try self.recorder.start(); self.setStatus("🔴"); self.hud.show(.listening(command: false)); Sound.start() }
                 catch {
                     self.setStatus("⚠️"); self.hud.show(.error("Mic failed"))
                     NSLog("Parla mic start failed: \(error)")
@@ -88,6 +117,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             case .up(let short):
+                // A command down that refused (bad focus/selection) never started
+                // recording; the paired fn-up has nothing to finish.
+                guard self.isRecording else { return }
                 // Short tap = accidental Globe press (emoji/input switch): abort
                 // silently, never run whisper. Recording still STARTED on fn-down
                 // so we don't clip speech onset; we just discard it here.
@@ -98,6 +130,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 self.isRecording = false
                 let samples = self.recorder.stop()
+                if self.commandMode {
+                    // Transform path: instruction → LLM → replace selection. Runs
+                    // on the processTask chain (whisper ctx not reentrant).
+                    let selection = self.commandSelection
+                    let gen = self.generation
+                    let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                    self.setStatus("…"); self.hud.show(.transcribing)
+                    self.processTask = Task { [prev = self.processTask] in
+                        await prev?.value
+                        await self.transform(samples: samples, selection: selection, gen: gen, bundleID: bundleID)
+                    }
+                    return
+                }
                 // Capture this dictation's mode now: a quick next fn-press
                 // rewrites self.liveTyping/focus before finish runs.
                 let live = self.liveTyping
@@ -370,6 +415,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let entry = HistoryEntry(raw: raw, cleaned: cleanedForHistory, appName: appName)
             DispatchQueue.main.async { self.history.append(entry) }
         }
+    }
+
+    /// Command mode: transcribe the spoken instruction on-device, transform the
+    /// selection captured at fn-down via the cleanup LLM, and replace the live
+    /// selection (paste) if it's still intact — else park the result in the
+    /// clipboard. Runs on the processTask chain like finish().
+    func transform(samples: [Float], selection: String, gen: Int, bundleID: String?) async {
+        let hud = self.hud
+        defer {
+            DispatchQueue.main.async {
+                guard !self.isRecording else { return }
+                self.setStatus(self.idleIcon)
+            }
+        }
+        guard let transcriber else {
+            NSLog("Parla transform: no whisper model loaded")
+            DispatchQueue.main.async { hud.show(.error("No whisper model")) }
+            return
+        }
+        let settings = store.load()
+        // Same min-audio floor as dictation: too short/silent = no instruction.
+        guard TextRules.audioWorthTranscribing(sampleCount: samples.count, rms: AudioRecorder.rms(samples)) else {
+            NSLog("Parla transform: audio below min-audio floor")
+            DispatchQueue.main.async { hud.show(.error("No command heard")) }
+            return
+        }
+        let prompt = settings.dictionary.isEmpty ? nil : settings.dictionary.joined(separator: ", ")
+        let instruction = transcriber.transcribe(samples, initialPrompt: prompt)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !instruction.isEmpty else {
+            NSLog("Parla transform: empty instruction")
+            DispatchQueue.main.async { hud.show(.error("No command heard")) }
+            return
+        }
+
+        // Transform via the cleanup client DIRECTLY (not Pipeline.clean): its
+        // raw-transcript fallback would return the spoken instruction on failure,
+        // which must never be pasted over the user's selection. A failure here is
+        // a hard failure — nothing inserted, nothing copied.
+        let ctx = CleanupContext(dictionary: settings.dictionary, snippets: [:], appName: nil, selection: selection)
+        let transformed: String
+        do {
+            let out = try await makeCleanupClient(settings: settings, env: ProcessInfo.processInfo.environment)
+                .clean(transcript: instruction, context: ctx)
+            transformed = CleanupSanitizer.sanitize(out)
+        } catch {
+            NSLog("Parla transform failed: \(error)")
+            DispatchQueue.main.async { hud.show(.error("Transform failed")) }
+            return
+        }
+        guard !transformed.isEmpty else {
+            NSLog("Parla transform: empty result")
+            DispatchQueue.main.async { hud.show(.error("Transform failed")) }
+            return
+        }
+        // Terminal newline guard: a multi-line result pasted into a terminal would
+        // run each line — same insertion-safety invariant as dictation.
+        let result = TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(transformed) : transformed
+
+        await MainActor.run {
+            guard gen == self.generation else {
+                // A newer dictation owns the field/HUD — no keystrokes. Park the
+                // result in the clipboard so it isn't lost.
+                NSLog("Parla transform: stale generation, clipboard fallback")
+                Inserter.copy(result)
+                return
+            }
+            // Only replace if the selection is provably still ours; otherwise the
+            // user clicked away — clipboard it rather than paste over new context.
+            if Inserter.selectedText() == selection {
+                NSLog("Parla transform: selection intact, replacing")
+                Inserter.insert(result) // paste replaces the live selection
+                Sound.finish()
+                hud.show(.done)
+            } else {
+                NSLog("Parla transform: selection changed, clipboard fallback")
+                Inserter.copy(result)
+                hud.show(.cleanedCopied)
+            }
+        }
+        // ponytail: no history recording for transforms (v1) — the instruction
+        // isn't a dictation, and the source text is the user's, not ours.
     }
 
     /// Live streaming pass loop: while fn is held, re-transcribe the unconfirmed

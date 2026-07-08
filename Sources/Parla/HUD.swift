@@ -6,7 +6,7 @@ import ParlaCore
 // callers hand it to DispatchQueue.main without non-Sendable capture warnings.
 final class HUD: @unchecked Sendable {
     enum State {
-        case listening
+        case listening(command: Bool)  // command: transform-selection mode ("Command…")
         case transcribing   // fn-up → raw text landing (fast, on-device)
         case polishing      // raw landed; LLM cleanup in flight — resolves to done/copied/cleanedCopied
         case done
@@ -72,11 +72,11 @@ final class HUD: @unchecked Sendable {
             label.frame = NSRect(x: 16, y: 12, width: 228, height: 20)
         }
         switch state {
-        case .listening:
+        case .listening(let command):
             dot.isHidden = false
             waveform.isHidden = false
             waveform.clear()
-            label.stringValue = "Listening…"
+            label.stringValue = command ? "Command…" : "Listening…"
             position()
             panel.orderFrontRegardless()
         case .transcribing:

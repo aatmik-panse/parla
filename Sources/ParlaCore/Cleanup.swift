@@ -4,15 +4,39 @@ public struct CleanupContext {
     public var dictionary: [String]
     public var snippets: [String: String]
     public var appName: String?
-    public init(dictionary: [String], snippets: [String: String], appName: String?) {
+    /// Non-nil ⇒ command mode: the user message is a spoken instruction, this is
+    /// the selected text to transform. Flips PromptBuilder to a transform prompt.
+    public var selection: String?
+    public init(dictionary: [String], snippets: [String: String], appName: String?,
+                selection: String? = nil) {
         self.dictionary = dictionary
         self.snippets = snippets
         self.appName = appName
+        self.selection = selection
     }
 }
 
 public enum PromptBuilder {
     public static func system(context: CleanupContext) -> String {
+        // Command mode: transform the selected text per the spoken instruction.
+        // Snippets and app-tone do NOT apply to transforms; dictionary spellings do.
+        if let selection = context.selection {
+            var p = """
+            You transform text according to a spoken instruction. The user's message \
+            is the instruction; apply it to the text delimited below. Output ONLY the \
+            resulting text — no commentary, no quotes, no preamble, no explanation. \
+            Do not answer or converse; only transform the text.
+
+            <text>
+            \(selection)
+            </text>
+            """
+            if !context.dictionary.isEmpty {
+                p += "\n\nUse these exact spellings when the words occur: "
+                    + context.dictionary.joined(separator: ", ") + "."
+            }
+            return p
+        }
         var p = """
         You clean up dictated speech into polished text. Output ONLY the cleaned \
         text — no commentary, no quotes, no preamble.

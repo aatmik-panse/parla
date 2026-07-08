@@ -26,6 +26,21 @@ final class CleanupTests: XCTestCase {
         XCTAssertTrue(p.contains("Slack"))
     }
 
+    func testTransformPromptBranch() {
+        let ctx = CleanupContext(
+            dictionary: ["Kubernetes"],
+            snippets: ["trigger": "SNIPPET_EXPANSION"],
+            appName: "SomeChatApp",
+            selection: "the selected text")
+        let p = PromptBuilder.system(context: ctx)
+        XCTAssertTrue(p.contains("the selected text"))   // selection embedded
+        XCTAssertTrue(p.lowercased().contains("transform")) // transform prompt, not cleanup
+        XCTAssertTrue(p.contains("Kubernetes"))          // dictionary still applies
+        XCTAssertFalse(p.contains("SNIPPET_EXPANSION"))  // snippets do NOT apply
+        XCTAssertFalse(p.contains("SomeChatApp"))        // app-tone does NOT apply
+        XCTAssertFalse(p.contains("Remove filler words")) // not the cleanup prompt
+    }
+
     func testRequestShape() async throws {
         let http = MockHTTP()
         http.body = Data(#"{"content":[{"type":"text","text":"Hi."}]}"#.utf8)

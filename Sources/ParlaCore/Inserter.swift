@@ -183,6 +183,17 @@ public enum Inserter {
         return (text as NSString, range.location)
     }
 
+    /// The focused element's current selection via AX. nil when there's no
+    /// selection, it's empty, or the field is AX-opaque — the caller treats all
+    /// three the same (refuse to transform). Read once at command fn-down.
+    public static func selectedText() -> String? {
+        guard let element = focusedElement() else { return nil }
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &ref) == .success,
+              let s = ref as? String, !s.isEmpty else { return nil }
+        return s
+    }
+
     /// True when the characters immediately before the cursor are exactly
     /// `typed` — i.e. erasing that many keystrokes removes only our own text.
     /// False when the field is opaque to AX (can't verify ⇒ don't erase).
