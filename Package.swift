@@ -3,19 +3,18 @@ import PackageDescription
 
 let package = Package(
     name: "Parla",
-    platforms: [.macOS(.v13)],
-    dependencies: [
-        // Pinned by revision to the 1.7.2 tag commit. 1.7.2 is the newest tag whose SPM
-        // manifest builds whisper.cpp from source (with Metal). 1.7.3/1.7.4 switched to a
-        // `systemLibrary` needing a brew-installed whisper; 1.7.5+ removed Package.swift
-        // entirely (xcframework). A revision pin (not a version) is required because the
-        // source target uses `.unsafeFlags`, which SPM forbids in versioned dependencies.
-        .package(url: "https://github.com/ggml-org/whisper.cpp.git",
-                 revision: "6266a9f9e56a5b925e9892acf650f3eb1245814d"), // tag v1.7.2
-    ],
+    platforms: [.macOS("13.3")], // matches the v1.9.1 xcframework's min target (silences ld warning)
     targets: [
-        .target(name: "ParlaCore",
-                dependencies: [.product(name: "whisper", package: "whisper.cpp")]),
+        // Official whisper.cpp v1.9.1 xcframework (macOS slice only — this is a macOS app).
+        // Source-building SwiftPM was dropped upstream at v1.7.5; the release xcframework is
+        // the maintained path and embeds the compiled Metal library into the binary (no
+        // runtime .metal resource bundle), fixing the v1.7.2 "ggml-common.h missing"
+        // breakage so Metal actually initializes. Vendored locally rather than via the
+        // release URL because that zip nests the .xcframework under build-apple/, which
+        // SPM's remote binaryTarget can't map. Refresh: download whisper-vX-xcframework.zip,
+        // keep the macos-arm64_x86_64 slice, trim Info.plist to it.
+        .binaryTarget(name: "whisper", path: "Frameworks/whisper.xcframework"),
+        .target(name: "ParlaCore", dependencies: ["whisper"]),
         .executableTarget(name: "Parla", dependencies: ["ParlaCore"]),
         .executableTarget(name: "parla-eval", dependencies: ["ParlaCore"]),
         .testTarget(name: "ParlaCoreTests", dependencies: ["ParlaCore"]),

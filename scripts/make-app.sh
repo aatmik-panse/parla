@@ -5,8 +5,12 @@ cd "$(dirname "$0")/.."
 swift build -c release
 APP=Parla.app
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks"
 cp .build/release/Parla "$APP/Contents/MacOS/Parla"
+# whisper is a dylib framework now (v1.9.1 xcframework) — bundle it and point
+# the binary's @rpath at Contents/Frameworks or the app dies on launch.
+cp -R .build/release/whisper.framework "$APP/Contents/Frameworks/"
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/Parla"
 cat > "$APP/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -25,6 +29,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 EOF
 # Stable designated requirement: TCC ties Mic/Accessibility grants to the DR;
 # plain ad-hoc uses the per-build cdhash, so every rebuild wiped the grants.
+codesign --force -s - "$APP/Contents/Frameworks/whisper.framework"
 codesign --force -s - --identifier com.parla.app \
   -r='designated => identifier "com.parla.app"' "$APP"
 echo "Built $APP — run: open $APP"
