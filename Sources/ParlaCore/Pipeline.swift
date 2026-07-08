@@ -16,20 +16,31 @@ public struct Pipeline {
         self.frontAppName = frontAppName
     }
 
-    public func process(samples: [Float]) async -> String? {
+    /// Whisper pass only: trimmed transcript, nil when empty. Split from clean()
+    /// so the caller can finalize raw text instantly and polish behind it.
+    public func transcript(samples: [Float]) -> String? {
         let s = settings()
         let prompt = s.dictionary.isEmpty ? nil : s.dictionary.joined(separator: ", ")
-        let transcript = transcribe(samples, prompt)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !transcript.isEmpty else { return nil }
+        let t = transcribe(samples, prompt).trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
+
+    /// LLM cleanup, sanitized. Never throws — cleanup must never kill a
+    /// dictation, so failures hand back the raw transcript.
+    public func clean(transcript: String) async -> String {
+        let s = settings()
         let ctx = CleanupContext(dictionary: s.dictionary, snippets: s.snippets,
                                  appName: frontAppName())
         do {
             return CleanupSanitizer.sanitize(try await cleanup(transcript, ctx))
         } catch {
-            // Cleanup must never kill a dictation — hand back the raw transcript.
-            NSLog("Parla cleanup failed, inserting raw transcript: \(error)")
+            NSLog("Parla cleanup failed, keeping raw transcript: \(error)")
             return transcript
         }
+    }
+
+    public func process(samples: [Float]) async -> String? {
+        guard let t = transcript(samples: samples) else { return nil }
+        return await clean(transcript: t)
     }
 }

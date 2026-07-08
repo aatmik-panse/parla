@@ -6,9 +6,11 @@ import AppKit
 final class HUD: @unchecked Sendable {
     enum State {
         case listening
-        case cleaning
+        case transcribing   // fn-up → raw text landing (fast, on-device)
+        case polishing      // raw landed; LLM cleanup in flight — resolves to done/copied/cleanedCopied
         case done
         case copied
+        case cleanedCopied  // swap unverifiable; cleaned text parked in the clipboard
         case error(String)
     }
 
@@ -60,6 +62,12 @@ final class HUD: @unchecked Sendable {
     func show(_ state: State) {
         hideItem?.cancel()
         hideItem = nil
+        if case .listening = state {
+            label.frame = NSRect(x: 158, y: 12, width: 92, height: 20)
+        } else {
+            // No waveform in these states — let longer labels use the full pill.
+            label.frame = NSRect(x: 16, y: 12, width: 228, height: 20)
+        }
         switch state {
         case .listening:
             dot.isHidden = false
@@ -68,11 +76,16 @@ final class HUD: @unchecked Sendable {
             label.stringValue = "Listening…"
             position()
             panel.orderFrontRegardless()
-        case .cleaning:
+        case .transcribing:
             dot.isHidden = true
             waveform.isHidden = true
-            label.stringValue = "Cleaning…"
+            label.stringValue = "Transcribing…"
             panel.orderFrontRegardless()
+        case .polishing:
+            dot.isHidden = true
+            waveform.isHidden = true
+            label.stringValue = "✓ · polishing…"
+            panel.orderFrontRegardless() // no scheduleHide — a terminal state follows
         case .done:
             dot.isHidden = true
             waveform.isHidden = true
@@ -83,6 +96,12 @@ final class HUD: @unchecked Sendable {
             dot.isHidden = true
             waveform.isHidden = true
             label.stringValue = "✓ In clipboard"
+            panel.orderFrontRegardless()
+            scheduleHide()
+        case .cleanedCopied:
+            dot.isHidden = true
+            waveform.isHidden = true
+            label.stringValue = "✓ cleaned in clipboard"
             panel.orderFrontRegardless()
             scheduleHide()
         case .error(let msg):

@@ -51,4 +51,57 @@ final class LiveTyperTests: XCTestCase {
         XCTAssertEqual(d.erase, 1)
         XCTAssertEqual(d.append, "")
     }
+
+    // MARK: swapPlan (raw → cleaned after instant finalize)
+
+    func testSwapPlanEqualIsNil() {
+        XCTAssertNil(LiveTyper.swapPlan(raw: "hello", cleaned: "hello"))
+    }
+
+    func testSwapPlanEqualAfterTrimmingIsNil() {
+        XCTAssertNil(LiveTyper.swapPlan(raw: "hello", cleaned: " hello \n"))
+    }
+
+    func testSwapPlanTailRevision() {
+        let p = LiveTyper.swapPlan(raw: "helo world", cleaned: "hello world")!
+        XCTAssertEqual(p.eraseTail, "o world") // diverges after "hel"
+        XCTAssertEqual(p.replacement, "lo world")
+    }
+
+    func testSwapPlanPureAppendErasesOneGrapheme() {
+        // Extension keeps the verify tail non-empty: erase "i", retype "i there".
+        let p = LiveTyper.swapPlan(raw: "hi", cleaned: "hi there")!
+        XCTAssertEqual(p.eraseTail, "i")
+        XCTAssertEqual(p.replacement, "i there")
+    }
+
+    func testSwapPlanShrinkHasEmptyReplacement() {
+        let p = LiveTyper.swapPlan(raw: "hi there", cleaned: "hi")!
+        XCTAssertEqual(p.eraseTail, " there")
+        XCTAssertEqual(p.replacement, "")
+    }
+
+    func testSwapPlanFullRewrite() {
+        let p = LiveTyper.swapPlan(raw: "abc", cleaned: "xyz")!
+        XCTAssertEqual(p.eraseTail, "abc")
+        XCTAssertEqual(p.replacement, "xyz")
+    }
+
+    func testSwapPlanEmptyCleanedIsNil() {
+        // A sanitizer-emptied cleanup must never erase the dictation.
+        XCTAssertNil(LiveTyper.swapPlan(raw: "hello world", cleaned: ""))
+        XCTAssertNil(LiveTyper.swapPlan(raw: "hello world", cleaned: " \n"))
+    }
+
+    func testSwapPlanNeverEmptyTailForNonEmptyRaw() {
+        // Property: the tail we verify/erase must never be empty (opaque-field
+        // select-back verification needs something to check).
+        for (raw, cleaned) in [("a", "ab"), ("hello", "hello!"), ("x y", "x z"), ("end.", "end")] {
+            let p = LiveTyper.swapPlan(raw: raw, cleaned: cleaned)!
+            XCTAssertFalse(p.eraseTail.isEmpty, "\(raw) -> \(cleaned)")
+            XCTAssertTrue(raw.hasSuffix(p.eraseTail))
+            // Applying the plan reproduces cleaned.
+            XCTAssertEqual(String(raw.dropLast(p.eraseTail.count)) + p.replacement, cleaned)
+        }
+    }
 }
