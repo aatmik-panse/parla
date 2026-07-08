@@ -164,6 +164,13 @@ public enum Inserter {
         return text.substring(with: NSRange(location: cursor - len, length: len)) == typed
     }
 
+    /// True when final replacement can be verified via AX. Fields that merely
+    /// look editable but hide text/cursor state should get one final paste, not
+    /// live streaming that later falls back to clipboard.
+    public static func canVerifyFocusedField() -> Bool {
+        focusedFieldState() != nil
+    }
+
     static func postKey(_ key: CGKeyCode, flags: CGEventFlags = []) {
         let src = CGEventSource(stateID: .combinedSessionState)
         if let down = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: true),
@@ -186,20 +193,30 @@ public enum Inserter {
         guard !expected.isEmpty else { return true }
         for _ in 0..<expected.count {
             postKey(123, flags: .maskShift) // ⇧←
-            usleep(3_000)
+            usleep(10_000)
         }
-        usleep(30_000)
+        usleep(80_000)
         let pb = NSPasteboard.general
-        let before = pb.changeCount
+        var marker = "__PARLA_COPY_PROBE__\(UUID().uuidString)"
+        while marker == expected {
+            marker = "__PARLA_COPY_PROBE__\(UUID().uuidString)"
+        }
+        pb.clearContents()
+        pb.setString(marker, forType: .string)
         postKey(8, flags: .maskCommand) // ⌘C
         var waited = 0
-        while pb.changeCount == before, waited < 400_000 {
+        while pb.string(forType: .string) == marker, waited < 600_000 {
             usleep(20_000)
             waited += 20_000
         }
-        if pb.changeCount != before, pb.string(forType: .string) == expected {
+        let copied = pb.string(forType: .string)
+        if copied == expected {
             return true
         }
+        NSLog("Parla select verify failed: %@ expected=%d copied=%d",
+              copied == marker ? "copy-timeout" : "mismatch",
+              expected.count,
+              copied?.count ?? -1)
         postKey(124) // → collapse selection, cursor back to the end
         return false
     }

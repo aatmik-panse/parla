@@ -41,11 +41,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSLog("Parla mic start failed: \(error)")
                     return
                 }
-                // Only stream into a confirmed text field; elsewhere keystrokes
-                // could fire shortcuts. Unconfirmed focus still gets the final
-                // text pasted; no focus at all is clipboard-only (see finish).
+                // Only stream when final replacement is verifiable. Opaque
+                // focused fields still get the final paste; no focus is
+                // clipboard-only (see finish).
                 self.focus = Inserter.focusTarget()
-                self.liveTyping = self.focus == .editable
+                self.liveTyping = self.focus == .editable && Inserter.canVerifyFocusedField()
                 if self.liveTyping, let transcriber = self.transcriber {
                     // Chain onto the previous finish so partial passes never run
                     // concurrently with the final pass (whisper ctx isn't reentrant).
@@ -126,9 +126,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     Inserter.copy(text)
                     hud.show(.copied)
                 case (false, .unknown), (false, .editable):
+                    NSLog("Parla finish path: focused paste")
                     Inserter.insert(text) // focus we couldn't stream into: paste at cursor
                     hud.show(.done)
                 case (false, .none):
+                    NSLog("Parla finish path: no focus, clipboard only")
                     Inserter.copy(text) // nothing focused: clipboard only, never paste
                     hud.show(.copied)
                 }

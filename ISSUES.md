@@ -44,20 +44,21 @@ synthetic keystroke or autocorrected. Now every erase is verified first:
   clipboard.
 Guarantee now: Parla cannot delete text it didn't write.
 
-## 7. "Now it only writes to the clipboard" — OPEN (direct consequence of #6)
-In the user's chat box, verification fails (field is opaque to AX and the
-select-back check hasn't been confirmed working there), so the safety rule
-routes the final cleaned text to the clipboard instead of replacing in-place.
-The select-back-and-verify fallback (commit 28db0a6) is built for exactly
-this but is NOT yet proven in the user's chat app — needs one real test.
-Diagnostics logging is in place (`finish path: ...` lines) to show which
-path fired.
+## 7. "Now it only writes to the clipboard" — ROOT CAUSE FOUND, PATCHED
+Reproduced from `/tmp/parla-stderr5.log`: live append worked, but finalization
+logged `finish path: unverified, clipboard only` even though `focus=1`. Root
+cause: Parla enabled live streaming for fields that merely looked editable via
+AX, but whose text/cursor could not be read back for safe final replacement.
+That created a bad state: draft text had already streamed into the box, cleanup
+could not verify what to replace, and the safety fallback copied to clipboard.
+Patch: live streaming now starts only when final replacement is AX-verifiable;
+opaque focused text boxes skip streaming and use the final focused paste path.
+Clipboard-only is reserved for no focused element.
 
 ## Next steps
-1. User tests current build in the real chat box; read `/tmp/parla-stderr5.log`
-   `finish path` lines to see whether select-verify works there.
-2. If select-verify fails in that app: log WHY (selection unsupported vs copy
-   timeout vs text mismatch) and decide per-app strategy — possibly a
-   user-facing setting: "replace mode: safe / aggressive" where aggressive
-   trusts counts (old behavior) for apps the user vouches for.
+1. User tests current build in the real chat box; success should log
+   `finish path: focused paste` for opaque fields, or `select-verified replace`
+   / `ax-verified replace` for fully AX-readable fields.
+2. If a focused text box still logs `no focus, clipboard only`, fix focus
+   detection for that specific app.
 3. Identify the actual chat app (which app is it?) to test against directly.

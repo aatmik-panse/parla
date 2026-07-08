@@ -15,4 +15,17 @@ final class TranscriberTests: XCTestCase {
     func testMissingModelThrows() {
         XCTAssertThrowsError(try WhisperTranscriber(modelPath: "/nonexistent.bin"))
     }
+
+    func testBlankAudioMarkerStripped() {
+        XCTAssertEqual(WhisperTranscriber.stripNonSpeech("[BLANK_AUDIO]"), "")
+        XCTAssertEqual(WhisperTranscriber.stripNonSpeech("(silence)"), "")
+        XCTAssertEqual(WhisperTranscriber.stripNonSpeech("*sigh*"), "")
+        XCTAssertEqual(WhisperTranscriber.stripNonSpeech("[MUSIC] [BLANK_AUDIO]"), "")
+    }
+
+    func testRealSpeechUntouched() {
+        XCTAssertEqual(WhisperTranscriber.stripNonSpeech("Hello world."), "Hello world.")
+        XCTAssertEqual(WhisperTranscriber.stripNonSpeech("Array [0] is empty"), "Array [0] is empty")
+        XCTAssertEqual(WhisperTranscriber.stripNonSpeech(""), "")
+    }
 }
