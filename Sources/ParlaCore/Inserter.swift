@@ -1,6 +1,17 @@
 import AppKit
 
 public enum Inserter {
+    /// Stamped on every CGEvent Parla posts (eventSourceUserData), so the hotkey
+    /// keyDown monitor can tell our own synthetic keystrokes from a real user
+    /// keypress and not self-cancel a live-streaming dictation. Arbitrary magic.
+    public static let syntheticMarker: Int64 = 0x50_41_52_4C_41 // "PARLA"
+
+    /// Post an event after tagging it as ours. All Parla keystrokes go through here.
+    static func post(_ event: CGEvent) {
+        event.setIntegerValueField(.eventSourceUserData, value: syntheticMarker)
+        event.post(tap: .cghidEventTap)
+    }
+
     /// Clipboard + synthetic ⌘V. The text intentionally STAYS in the clipboard —
     /// that is the escape hatch when an app rejects the paste.
     /// ponytail: no clipboard save/restore (racy per architecture.md); add only if users complain.
@@ -26,8 +37,8 @@ public enum Inserter {
         else { return }
         down.flags = .maskCommand
         up.flags = .maskCommand
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
+        post(down)
+        post(up)
     }
 
     /// Split UTF-16 units into chunks of at most `max`, never ending a chunk on an
@@ -55,8 +66,8 @@ public enum Inserter {
                let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) {
                 down.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
                 up.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
-                down.post(tap: .cghidEventTap)
-                up.post(tap: .cghidEventTap)
+                post(down)
+                post(up)
             }
             usleep(5_000)
         }
@@ -71,8 +82,8 @@ public enum Inserter {
         for _ in 0..<n {
             if let down = CGEvent(keyboardEventSource: src, virtualKey: delKey, keyDown: true),
                let up = CGEvent(keyboardEventSource: src, virtualKey: delKey, keyDown: false) {
-                down.post(tap: .cghidEventTap)
-                up.post(tap: .cghidEventTap)
+                post(down)
+                post(up)
             }
             usleep(5_000)
         }
@@ -177,8 +188,8 @@ public enum Inserter {
            let up = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: false) {
             down.flags = flags
             up.flags = flags
-            down.post(tap: .cghidEventTap)
-            up.post(tap: .cghidEventTap)
+            post(down)
+            post(up)
         }
     }
 

@@ -2,6 +2,19 @@ import AppKit
 import AVFoundation
 import ParlaCore
 
+/// Subtle system-sound cues. NSSound(named:) uses the bundled ~/Library sounds —
+/// no audio framework. ponytail: fire-and-forget; a nil name just no-ops.
+enum Sound {
+    private static func play(_ name: String) {
+        guard let s = NSSound(named: name) else { return }
+        s.volume = 0.25
+        s.play()
+    }
+    static func start()  { play("Tink") }   // record-start
+    static func finish() { play("Glass") }  // raw transcript landed
+    static func cancel() { play("Funk") }   // dictation aborted
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let store = SettingsStore()
@@ -38,14 +51,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkey.onEdge = { [weak self] edge in
             guard let self else { return }
-            NSLog("Parla: fn %@", edge == .down ? "down" : "up")
+            NSLog("Parla: fn edge %@", "\(edge)")
             switch edge {
             case .down:
                 self.generation += 1 // invalidates any pending cleaned-swap
                 self.isRecording = true
                 // typed is NOT reset here: a still-queued finish from the previous
                 // dictation must see it to erase that dictation's live text.
-                do { try self.recorder.start(); self.setStatus("🔴"); self.hud.show(.listening) }
+                do { try self.recorder.start(); self.setStatus("🔴"); self.hud.show(.listening); Sound.start() }
                 catch {
                     self.setStatus("⚠️"); self.hud.show(.error("Mic failed"))
                     NSLog("Parla mic start failed: \(error)")
@@ -64,7 +77,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         await self.stream(transcriber: transcriber)
                     }
                 }
-            case .up:
+            case .up(let short):
+                // Short tap = accidental Globe press (emoji/input switch): abort
+                // silently, never run whisper. Recording still STARTED on fn-down
+                // so we don't clip speech onset; we just discard it here.
+                if short {
+                    NSLog("Parla: short tap, discarding")
+                    self.cancelDictation(silent: true)
+                    return
+                }
                 self.isRecording = false
                 let samples = self.recorder.stop()
                 // Capture this dictation's mode now: a quick next fn-press
@@ -81,9 +102,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     await prev?.value
                     await self.finish(samples: samples, live: live, focus: focus, gen: gen)
                 }
+            case .cancel:
+                // A real key was pressed while fn was held (fn+arrow, Esc): abort.
+                NSLog("Parla: cancelled by keypress")
+                self.cancelDictation(silent: false)
             }
         }
         hotkey.start()
+    }
+
+    /// Abort the in-flight dictation: stop the stream loop + recorder (discard
+    /// audio, never call whisper), then queue the undo of any live-typed text on
+    /// the processTask chain so it serializes behind a still-running streaming
+    /// pass and reads the final `typed` value. `silent` = accidental short tap
+    /// (no sound, HUD just hides); otherwise a real cancel (sound + ✕ HUD).
+    func cancelDictation(silent: Bool) {
+        isRecording = false          // stops the stream loop
+        _ = recorder.stop()          // discard captured audio
+        if !silent { Sound.cancel() }
+        let hud = self.hud
+        processTask = Task { [prev = self.processTask] in
+            await prev?.value        // wait out any in-flight streaming pass
+            await MainActor.run {
+                // Undo live-typed text only if still provably ours (same
+                // invariant as finish's empty-transcript path — never blind-delete).
+                let typedCount = self.typed.count
+                if typedCount > 0 {
+                    if Inserter.canEraseTyped(self.typed) {
+                        Inserter.typeBackspaces(typedCount)
+                    } else if Inserter.selectBackAndVerify(self.typed) {
+                        Inserter.typeBackspaces(1) // delete the verified selection
+                    }
+                }
+                self.typed = ""
+                self.window = nil    // discard any confirmed-prefix the stream handed off
+                if silent { hud.hide() } else { hud.show(.cancelled) }
+            }
+        }
+        setStatus(transcriber == nil ? "⚠️" : "🎤")
     }
 
     func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget, gen: Int) async {
@@ -188,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return .clipboard
             }
         }
+        Sound.finish() // raw transcript landed — the user-visible finalize moment
 
         // Async polish: cleanup, then swap raw → cleaned with the same
         // verification machinery. Still on the processTask chain, so a queued

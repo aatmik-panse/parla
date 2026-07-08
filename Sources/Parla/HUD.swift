@@ -11,6 +11,7 @@ final class HUD: @unchecked Sendable {
         case done
         case copied
         case cleanedCopied  // swap unverifiable; cleaned text parked in the clipboard
+        case cancelled      // dictation aborted (key pressed while fn held)
         case error(String)
     }
 
@@ -102,6 +103,12 @@ final class HUD: @unchecked Sendable {
             dot.isHidden = true
             waveform.isHidden = true
             label.stringValue = "✓ cleaned in clipboard"
+            panel.orderFrontRegardless()
+            scheduleHide()
+        case .cancelled:
+            dot.isHidden = true
+            waveform.isHidden = true
+            label.stringValue = "✕ Cancelled"
             panel.orderFrontRegardless()
             scheduleHide()
         case .error(let msg):
