@@ -93,6 +93,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let live = self.liveTyping
                 let focus = self.focus
                 let gen = self.generation
+                // Snapshot the frontmost app ONCE here: terminal newline-flattening
+                // must use the same target for the raw finalize and the async swap.
+                let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
                 self.setStatus("…")
                 self.hud.show(.transcribing)
                 // Chain onto the previous work (any in-flight streaming pass):
@@ -100,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // dictation order.
                 self.processTask = Task { [prev = self.processTask] in
                     await prev?.value
-                    await self.finish(samples: samples, live: live, focus: focus, gen: gen)
+                    await self.finish(samples: samples, live: live, focus: focus, gen: gen, bundleID: bundleID)
                 }
             case .cancel:
                 // A real key was pressed while fn was held (fn+arrow, Esc): abort.
@@ -142,7 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setStatus(transcriber == nil ? "⚠️" : "🎤")
     }
 
-    func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget, gen: Int) async {
+    func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget, gen: Int, bundleID: String?) async {
         let hud = self.hud // bind so main-queue hops don't capture non-Sendable self
         defer {
             DispatchQueue.main.async {
@@ -175,14 +178,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let win = self.window {
             self.window = nil
             let cut = min(win.cutSample, samples.count)
-            let tailText = transcriber.transcribe(
-                Array(samples[cut...]),
-                initialPrompt: StreamWindow.tailPrompt(dictionary: settings.dictionary,
-                                                       confirmed: win.confirmedText))
-            let joined = StreamWindow.join(win.confirmedText, tailText)
-            raw = joined.isEmpty ? nil : joined
-        } else {
+            let tail = Array(samples[cut...])
+            // Min-audio guard on the TAIL only: a long dictation trailing off into
+            // silence still finalizes its confirmed prefix — we just skip the tail
+            // whisper pass (which would hallucinate) and use the confirmed text raw.
+            if TextRules.audioWorthTranscribing(sampleCount: tail.count, rms: AudioRecorder.rms(tail)) {
+                let tailText = transcriber.transcribe(
+                    tail,
+                    initialPrompt: StreamWindow.tailPrompt(dictionary: settings.dictionary,
+                                                           confirmed: win.confirmedText))
+                let joined = StreamWindow.join(win.confirmedText, tailText)
+                raw = joined.isEmpty ? nil : joined
+            } else {
+                raw = win.confirmedText.isEmpty ? nil : win.confirmedText
+            }
+        } else if TextRules.audioWorthTranscribing(sampleCount: samples.count, rms: AudioRecorder.rms(samples)) {
             raw = pipeline.transcript(samples: samples)
+        } else {
+            // Too short or silent — whisper hallucinates here. Treat as empty.
+            NSLog("Parla finish: audio below min-audio floor, skipping whisper")
+            raw = nil
         }
 
         guard let raw else {
@@ -203,61 +218,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // Terminal newline guard: flatten before ANY insertion so a multi-line
+        // transcript can't run each line as a command. insertText is what actually
+        // lands in the field — the async swap below must diff against IT, not raw.
+        let insertText = TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(raw) : raw
+
         // Instant finalize: land the raw transcript NOW; the LLM polish swaps in
         // behind it without blocking the user.
         let landing: Landing = await MainActor.run {
             let typedCount = self.typed.count // graphemes streamed live so far
             defer { self.typed = "" }
             NSLog("Parla finish: raw=%@ live=%d focus=%d typed=%d",
-                  raw, live ? 1 : 0, focus == .none ? 0 : 1, typedCount)
+                  insertText, live ? 1 : 0, focus == .none ? 0 : 1, typedCount)
             switch (live, focus) {
+            case (_, .secure):
+                // Password field: on-device transcript to the clipboard only.
+                // Never paste (it isn't a normal field) and never cloud-polish
+                // (it's plausibly a password) — the guard below skips clean().
+                NSLog("Parla finish path: secure field, clipboard only")
+                Inserter.copy(insertText)
+                hud.show(.copied)
+                return .clipboard
             case (true, _) where typedCount == 0 || Inserter.canEraseTyped(self.typed):
                 // Replace the live-typed text wholesale with the raw final.
                 NSLog("Parla finish path: ax-verified replace")
                 Inserter.typeBackspaces(typedCount)
-                Inserter.insert(raw)
+                Inserter.insert(insertText)
                 hud.show(.polishing)
                 return .field
             case (true, _) where Inserter.selectBackAndVerify(self.typed):
                 // Opaque field: our streamed text is now the live selection —
                 // pasting replaces exactly it.
                 NSLog("Parla finish path: select-verified replace")
-                Inserter.insert(raw)
+                Inserter.insert(insertText)
                 hud.show(.polishing)
                 return .field
             case (true, _):
                 // Can't prove the field still ends with our streamed text —
                 // leave it in place and offer the transcript instead.
                 NSLog("Parla finish path: unverified, clipboard only")
-                Inserter.copy(raw)
+                Inserter.copy(insertText)
                 hud.show(.polishing)
                 return .clipboard
             case (false, .unknown), (false, .editable):
                 NSLog("Parla finish path: focused paste")
-                Inserter.insert(raw) // focus we couldn't stream into: paste at cursor
+                Inserter.insert(insertText) // focus we couldn't stream into: paste at cursor
                 hud.show(.polishing)
                 return .field
             case (false, .none):
                 NSLog("Parla finish path: no focus, clipboard only")
-                Inserter.copy(raw) // nothing focused: clipboard only, never paste
+                Inserter.copy(insertText) // nothing focused: clipboard only, never paste
                 hud.show(.polishing)
                 return .clipboard
             }
         }
         Sound.finish() // raw transcript landed — the user-visible finalize moment
 
+        // Secure field: never send the transcript to the cloud cleanup LLM. The
+        // raw on-device text is already in the clipboard with the .copied HUD.
+        guard focus != .secure else { return }
+
         // Async polish: cleanup, then swap raw → cleaned with the same
         // verification machinery. Still on the processTask chain, so a queued
         // next dictation starts only after this resolves (insertion order holds).
-        let cleaned = await pipeline.clean(transcript: raw)
+        let cleanedRaw = await pipeline.clean(transcript: raw)
+        // Same terminal guard on the cleaned text — it replaces insertText in the
+        // field, so it must be flattened too, and the plan must diff flattened vs
+        // flattened (insertText) or the erase/verify counts won't match the field.
+        let cleaned = TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(cleanedRaw) : cleanedRaw
         await MainActor.run {
-            let plan = LiveTyper.swapPlan(raw: raw, cleaned: cleaned)
+            let plan = LiveTyper.swapPlan(raw: insertText, cleaned: cleaned)
             guard gen == self.generation else {
                 // A newer dictation owns the field and HUD — no keystrokes, no
                 // HUD. Cleaned text still lands in the clipboard if it's still
                 // our raw sitting there.
                 NSLog("Parla swap: stale generation, clipboard fallback")
-                if plan != nil, NSPasteboard.general.string(forType: .string) == raw {
+                if plan != nil, NSPasteboard.general.string(forType: .string) == insertText {
                     Inserter.copy(cleaned)
                 }
                 return
@@ -266,7 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .clipboard:
                 // Nothing of ours in a field — just refresh the clipboard
                 // raw → cleaned, unless the user copied something meanwhile.
-                if NSPasteboard.general.string(forType: .string) == raw {
+                if NSPasteboard.general.string(forType: .string) == insertText {
                     if plan != nil { Inserter.copy(cleaned) }
                     hud.show(.copied)
                 } else {
@@ -274,7 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             case .field:
                 guard let plan else { hud.show(.done); return } // polish was a no-op
-                if Inserter.canEraseTyped(raw) {
+                if Inserter.canEraseTyped(insertText) {
                     NSLog("Parla swap path: ax-verified tail swap (erase %d)", plan.eraseTail.count)
                     Inserter.typeBackspaces(plan.eraseTail.count)
                     Inserter.typeUnicode(plan.replacement)

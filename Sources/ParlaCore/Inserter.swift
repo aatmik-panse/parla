@@ -94,6 +94,7 @@ public enum Inserter {
         case editable   // confirmed text field: safe to live-type into
         case unknown    // something is focused but AX can't confirm it's a field: paste, don't stream
         case none       // no focused element at all: clipboard only
+        case secure     // password field (AXSecureTextField): on-device only, clipboard, never cloud
     }
 
     /// Best-effort focus classification. Chromium/Electron apps (Chrome, VS Code,
@@ -103,7 +104,9 @@ public enum Inserter {
     /// (paste fallback); subsequent ones see the real field.
     public static func focusTarget() -> FocusTarget {
         var result = classifyFocus()
-        if result != .editable, let app = NSWorkspace.shared.frontmostApplication {
+        // Never wake Electron's AX tree for a secure field — the whole point is
+        // to touch it as little as possible (never stream, never paste, never cloud).
+        if result != .editable, result != .secure, let app = NSWorkspace.shared.frontmostApplication {
             let appEl = AXUIElementCreateApplication(app.processIdentifier)
             AXUIElementSetAttributeValue(appEl, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
             AXUIElementSetAttributeValue(appEl, "AXManualAccessibility" as CFString, kCFBooleanTrue)
@@ -130,10 +133,13 @@ public enum Inserter {
 
     private static func classifyFocus() -> FocusTarget {
         guard let element = focusedElement() else { return .none }
-        var role: CFTypeRef?
-        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success,
-           let role = role as? String,
-           ["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"].contains(role) {
+        var roleRef: CFTypeRef?
+        let role = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef) == .success
+            ? roleRef as? String : nil
+        // Password field: bail BEFORE any editable heuristic — a secure field is
+        // also settable/selectable, so it would otherwise classify as .editable.
+        if role == "AXSecureTextField" { return .secure }
+        if let role, ["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"].contains(role) {
             return .editable
         }
         // A settable value or a selectable text range both mean editable text.
