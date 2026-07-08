@@ -1,6 +1,10 @@
 # Parla
 
-Parla is a macOS menu-bar dictation app: hold a hotkey, speak, release — your speech is transcribed on-device with whisper.cpp, cleaned up by a Claude model, and typed into whatever app you're using.
+Parla is a macOS menu-bar dictation app: hold a hotkey, speak, release — your
+speech is transcribed on-device with whisper.cpp, cleaned up by a Claude
+model, and typed into whatever app you're using. Hold **⇧+fn** instead with
+text selected to speak an edit instruction and transform the selection in
+place (see Command mode below).
 
 ## First run
 
@@ -11,22 +15,63 @@ scripts/make-app.sh                # build + bundle Parla.app
 open Parla.app
 ```
 
+Transcription runs on a vendored whisper.cpp v1.9.1 xcframework with Metal GPU
+active by default; `make-app.sh` bundles `whisper.framework` into
+`Parla.app/Contents/Frameworks` (macOS 13.3+ required to match it).
+
 On first launch Parla lives in the menu bar (no dock icon) and shows 🎤. macOS
 will prompt for **Microphone** and **Accessibility** permission — grant both in
 System Settings > Privacy & Security. Then hold **fn 🌐 (Globe)** and speak;
-release to transcribe, clean up, and type the text into the frontmost app.
+release to transcribe and type the text into the frontmost app instantly, with
+a cleaned-up version swapped in moments later. Taps shorter than 200ms are
+treated as an accidental Globe press and discarded; pressing any other key
+while fn is held cancels the dictation and undoes anything already typed.
+Start/finish/cancel each play a soft system sound.
 
-The menu-bar icon reflects state: 🎤 idle · 🔴 recording · … processing · ⚠️
-problem (no model loaded, or the mic failed to start).
+The menu-bar icon reflects state: 🎤 idle · 🔴 recording · … processing · ⬇️
+N% downloading the model · ⚠️ problem (no model, mic/Accessibility permission
+missing, or a broken `settings.json`).
+
+The menu also shows live Microphone/Accessibility permission status
+(click an unfulfilled one to jump to System Settings), a one-click
+**Download model (base.en)** item when no model is loaded, a
+**⚠️ settings.json invalid** item when the config fails to parse, a
+**Launch at Login** toggle, and **Paste Last Dictation** / a **Recent**
+submenu (last 8 dictations, backed by a local 50-entry history) with
+**Clear History** — see `historyEnabled` below.
 
 ## Live streaming
 
 While you hold the hotkey, text streams into the focused text field in
-near-real-time, and gets replaced by the cleaned-up version on release. As
-whisper revises earlier words, Parla backspaces the wrong tail and retypes it —
-so **don't click or move the cursor while dictating**, or the backspaces land in
-the wrong place. If no editable text field has focus when you start, nothing is
-typed; the final text goes to the clipboard only (press ⌘V to paste it).
+near-real-time. Streaming only starts when the field's final text is
+AX-verifiable (so Parla can safely reconcile it); fields that merely look
+editable but can't be read back skip streaming and get a single paste on
+release instead, and no focused field means clipboard-only. As whisper revises
+earlier words, Parla backspaces the wrong tail and retypes it — so **don't
+click or move the cursor while dictating**, or the backspaces land in the
+wrong place. Dictations longer than ~15s freeze a confirmed prefix at the
+nearest quiet moment so each pass only re-transcribes the recent tail, not the
+whole recording.
+
+On release, the raw transcript lands immediately (HUD: "Transcribing…", then
+"✓ · polishing…"); the LLM-cleaned version swaps in behind it moments later via
+a diff (only the changed tail is backspaced and retyped), landing on one of:
+"✓ Pasted", "✓ In clipboard", "✓ cleaned in clipboard" (swap couldn't be
+verified — cleaned text parked in the clipboard instead), or "✓ raw (cleanup
+failed)". Cancelling (a keypress while fn is held) shows "✕ Cancelled" and
+undoes any streamed text. Set `liveStreamingEnabled: false` to disable the
+mid-stream word-by-word retyping while keeping the instant raw-then-polish
+finalize on release.
+
+## Command mode
+
+Select some text, hold **⇧+fn**, speak an instruction (e.g. "make this more
+formal"), and release: the selection is transformed by the cleanup model and
+pasted over it. The selection is captured at fn-down and re-verified at
+fn-up — if it's no longer intact (you clicked away or edited it), the result
+goes to the clipboard instead of overwriting new content. A failed transform
+never pastes the spoken instruction itself; nothing is inserted. Password
+fields and empty selections refuse before recording even starts.
 
 ## Permissions
 
@@ -35,16 +80,25 @@ Parla needs:
 - **Microphone** — to record while you hold the hotkey.
 - **Accessibility** — to listen for the global hotkey and type text into the frontmost app (System Settings > Privacy & Security > Accessibility).
 
+Password fields (`AXSecureTextField`) are detected via Accessibility and
+handled specially: the on-device transcript goes to the clipboard only —
+never pasted, never sent to the cleanup model.
+
 ## Configuration
 
 Settings live at `~/Library/Application Support/Parla/settings.json` — use the
-menu-bar **Open Settings File** item to create and edit it. Fields:
+menu-bar **Open Settings File** item to create and edit it. A file that fails
+to parse is never silently overwritten; the menu shows the decode error until
+you fix it. Fields:
 
 - `dictionary` — array of exact spellings (names, jargon) to bias transcription and cleanup, e.g. `["Parla", "whisper.cpp"]`.
 - `snippets` — object mapping a spoken trigger phrase to its expansion, e.g. `{"my address": "123 Main St"}`.
 - `cleanupModel` — Anthropic model id for cleanup (default `claude-haiku-4-5`).
 - `anthropicApiKey` — API key for cleanup. The `ANTHROPIC_API_KEY` environment variable takes precedence; if neither is set, Parla inserts the raw transcript.
 - `whisperModelPath` — absolute path to a ggml whisper model. Defaults to the model downloaded by `scripts/download-model.sh`.
+- `historyEnabled` — keep a local log of the last 50 dictations (raw + cleaned + app name) at `~/Library/Application Support/Parla/history.json`, for the menu's Paste Last Dictation / Recent. Default `true`. Secure-field and cancelled dictations are never recorded regardless of this setting.
+- `liveStreamingEnabled` — retype the field word-by-word as whisper revises its guess while you're still holding the hotkey. Default `true`; turning it off does not affect the instant raw finalize on release.
+- `restoreClipboard` — after a dictation's cleaned text has verifiably landed in a field, put the clipboard back to whatever it held before you started dictating (instead of leaving the dictated text there as an escape hatch). Default `false`. Only string clipboard contents are snapshotted/restored — a non-text clipboard (e.g. an image) is left untouched.
 
 ## Cleanup providers
 
