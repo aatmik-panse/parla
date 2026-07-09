@@ -24,28 +24,38 @@ final class HUD: @unchecked Sendable {
     private var hideItem: DispatchWorkItem?
 
     init() {
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 260, height: 44),
+        // Panel is larger than the pill so the lavender glow has room to render.
+        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 284, height: 68),
                         styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: false)
         panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        panel.hasShadow = false // the pill's own glow is the only shadow
         panel.ignoresMouseEvents = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-        let pill = NSVisualEffectView(frame: panel.contentView!.bounds)
+        // Flow-bar look (docs/plan.md §Flow Bar): near-black capsule with a thin
+        // purple ring and soft lavender glow. Static colors in both appearances.
+        let container = NSView(frame: panel.contentView!.bounds)
+        container.autoresizingMask = [.width, .height]
+        let pill = NSView(frame: NSRect(x: 12, y: 12, width: 260, height: 44))
         pill.autoresizingMask = [.width, .height]
-        pill.material = .hudWindow
-        pill.blendingMode = .behindWindow
-        pill.state = .active
         pill.wantsLayer = true
-        pill.layer?.cornerRadius = 14
-        pill.layer?.masksToBounds = true
-        panel.contentView = pill
+        pill.layer?.backgroundColor = NSColor(srgbRed: 0.102, green: 0.102, blue: 0.102, alpha: 0.97).cgColor // vast-950
+        pill.layer?.cornerRadius = 22
+        pill.layer?.borderWidth = 1
+        pill.layer?.borderColor = NSColor(srgbRed: 0.635, green: 0.431, blue: 0.757, alpha: 0.6).cgColor // brand-700
+        pill.layer?.shadowColor = NSColor(srgbRed: 0.941, green: 0.843, blue: 1.0, alpha: 1).cgColor // brand-500 glow
+        pill.layer?.shadowOpacity = 0.45
+        pill.layer?.shadowRadius = 9
+        pill.layer?.shadowOffset = .zero
+        container.addSubview(pill)
+        panel.contentView = container
 
         dot.wantsLayer = true
-        dot.layer?.backgroundColor = NSColor.systemRed.cgColor
+        dot.layer?.backgroundColor = NSColor(srgbRed: 0.933, green: 0.416, blue: 0.416, alpha: 1).cgColor // coral (destructive-500)
         dot.layer?.cornerRadius = 4
         dot.frame = NSRect(x: 14, y: 18, width: 8, height: 8)
         pill.addSubview(dot)
