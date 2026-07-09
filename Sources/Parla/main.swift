@@ -432,18 +432,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // that the swap is verified to have landed in-field.
                     if settings.restoreClipboard { Inserter.restore(clipboardSnapshot) }
                     hud.show(.done)
-                } else if Inserter.selectBackAndVerify(plan.eraseTail) {
-                    NSLog("Parla swap path: select-verified tail swap (erase %d)", plan.eraseTail.count)
-                    if plan.replacement.isEmpty {
-                        Inserter.typeBackspaces(1) // delete the verified selection
-                    } else {
-                        Inserter.typeUnicode(plan.replacement) // replaces the live selection
-                    }
-                    Inserter.copy(cleaned)
-                    if settings.restoreClipboard { Inserter.restore(clipboardSnapshot) }
-                    hud.show(.done)
                 } else {
-                    // User clicked away or typed — leave the raw text alone.
+                    // AX can't prove the field still ends with our paste. No
+                    // select-back copy-probe fallback here: it parks a probe
+                    // marker in the clipboard for up to 600ms per dictation
+                    // (immortalized by clipboard managers), flicker-selects the
+                    // user's text, and Chromium never answers the ⌘C anyway.
+                    // Leave the raw text alone; cleaned to the clipboard.
                     NSLog("Parla swap path: unverified, cleaned to clipboard")
                     Inserter.copy(cleaned)
                     hud.show(.cleanedCopied)
