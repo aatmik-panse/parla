@@ -196,10 +196,21 @@ struct DictionaryPage: View {
 struct SnippetsPage: View {
     @ObservedObject var model: HubModel
 
+    // Trimmed, non-empty triggers that appear more than once — only the last
+    // survives save() (Dictionary uniquingKeysWith), so flag the rest.
+    private var duplicateTriggers: Set<String> {
+        let trimmed = model.snippets.map { $0.trigger.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        var counts: [String: Int] = [:]
+        for t in trimmed { counts[t, default: 0] += 1 }
+        return Set(counts.filter { $0.value > 1 }.keys)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HubSection("Snippets",
-                       footer: "Say the trigger phrase while dictating and Parla types the expansion instead.") {
+                       footer: "Say the trigger phrase while dictating and Parla types the expansion instead."
+                           + (duplicateTriggers.isEmpty ? "" : " Duplicate triggers exist — only the last one is saved.")) {
                 if model.snippets.isEmpty {
                     EmptyHint(text: "No snippets yet")
                 } else {
@@ -207,6 +218,11 @@ struct SnippetsPage: View {
                         HStack(spacing: 8) {
                             TextField("trigger phrase", text: $row.trigger)
                                 .hubField().frame(width: 170)
+                                .overlay {
+                                    if duplicateTriggers.contains(row.trigger.trimmingCharacters(in: .whitespaces)) {
+                                        RoundedRectangle(cornerRadius: 8).stroke(Theme.danger)
+                                    }
+                                }
                             Image(systemName: "arrow.right")
                                 .font(.system(size: 11))
                                 .foregroundStyle(Theme.muted)

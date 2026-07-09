@@ -52,6 +52,13 @@ final class HubModel: ObservableObject {
     /// Re-read everything from disk — called when the window opens/becomes key
     /// so external edits (settings file, new dictations) show up.
     func refresh() {
+        // Becoming key must not clobber a pending edit: flush any debounced
+        // save before re-reading from disk, or the reload below discards it.
+        if saveItem != nil {
+            saveItem?.cancel()
+            saveItem = nil
+            save()
+        }
         loading = true
         defer { loading = false }
         settings = store.load()
@@ -107,6 +114,10 @@ final class HubModel: ObservableObject {
     }
 
     private func save() {
+        // A save scheduled while the file was valid must never fire after the
+        // file has since been found invalid — never overwrite a file the user
+        // is hand-fixing.
+        guard loadError == nil else { return }
         var s = settings
         s.dictionary = words.map { $0.text.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }

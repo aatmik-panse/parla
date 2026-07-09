@@ -78,7 +78,7 @@ struct HubButtonStyle: ButtonStyle {
             .font(.system(size: 12.5, weight: .medium))
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
-            .foregroundStyle(kind == .primary ? Color.white : kind == .danger ? Theme.danger : Theme.text)
+            .foregroundStyle(kind == .primary ? Theme.onAccent : kind == .danger ? Theme.danger : Theme.text)
             .background(RoundedRectangle(cornerRadius: 8)
                 .fill(kind == .primary ? Theme.accent : Theme.card))
             .overlay(RoundedRectangle(cornerRadius: 8)

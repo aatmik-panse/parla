@@ -51,7 +51,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var downloadTask: URLSessionDownloadTask?
     var downloadObservation: NSKeyValueObservation?
 
-    // Hub: the management window. Lazy so tray-only sessions never build it.
+    // Hub: hubModel is cheap and touched at every launch (loadModel() sets
+    // its modelLoaded below) — hubController, the window, is what's built
+    // lazily on first open.
     lazy var hubModel: HubModel = {
         let m = HubModel(store: store, history: history)
         m.onDownloadModel = { [weak self] in self?.downloadModel() }

@@ -13,6 +13,7 @@ enum Theme {
     static let muted      = dyn(0x8A867C, 0xA19E96)
     static let accent     = dyn(0x6C358C, 0xD9B8F0) // brand-800 / bright lavender
     static let accentFill = dyn(0xF0D7FF, 0x3C2947) // brand-500 / brand-950
+    static let onAccent   = dyn(0xFFFFFF, 0x30302F) // text on accent-filled surfaces
     static let success    = dyn(0x4FBF78, 0x4FBF78)
     static let danger     = dyn(0xEE6A6A, 0xEE6A6A)
 
