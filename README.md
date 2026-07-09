@@ -39,6 +39,13 @@ The menu-bar icon reflects state: 🎤 idle · 🔴 recording · … processing 
 N% downloading the model · ⚠️ problem (no model, mic/Accessibility permission
 missing, or a broken `settings.json`).
 
+**Open Parla…** (first menu item) opens the Hub — a settings window with
+General (permissions, whisper model, launch at login, shortcuts), AI Cleanup
+(provider/model/API key), Dictionary, Snippets, History (searchable, with
+copy/clear), and Data & Privacy pages. Everything it edits lives in the same
+`settings.json` described below; if that file is invalid the Hub shows the
+error and disables editing rather than overwriting it.
+
 The menu also shows live Microphone/Accessibility permission status
 (click an unfulfilled one to jump to System Settings), a one-click
 **Download model (base.en)** item when no model is loaded, a
