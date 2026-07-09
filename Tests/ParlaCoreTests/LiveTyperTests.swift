@@ -52,6 +52,18 @@ final class LiveTyperTests: XCTestCase {
         XCTAssertEqual(d.append, "")
     }
 
+    func testDiffSuffixReconstructsNew() {
+        // Property both stream() and the diff-based finalize rely on: erasing
+        // exactly `typed.suffix(d.erase)` and typing d.append reproduces `new`,
+        // and that suffix has d.erase graphemes (what select-back verifies).
+        for (typed, new) in [("hello world", "hello word"), ("abc", "abc"),
+                             ("", "hi"), ("hi there", "hi"), ("hi😀", "hi!")] {
+            let d = LiveTyper.diff(typed: typed, new: new)
+            XCTAssertEqual(String(typed.dropLast(d.erase)) + d.append, new, "\(typed) -> \(new)")
+            XCTAssertEqual(String(typed.suffix(d.erase)).count, d.erase, "\(typed) -> \(new)")
+        }
+    }
+
     // MARK: swapPlan (raw → cleaned after instant finalize)
 
     func testSwapPlanEqualIsNil() {

@@ -108,7 +108,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // way to pick up a live liveStreamingEnabled toggle immediately.
                 self.liveTyping = self.store.load().liveStreamingEnabled
                     && self.focus == .editable && Inserter.canVerifyFocusedField()
-                if self.liveTyping, let transcriber = self.transcriber {
+                // Shadow streaming: run the pass loop on EVERY dictation, not just
+                // live-typing ones, so finish() only ever pays for the unconfirmed
+                // tail. Actual typing inside the loop is gated on liveTyping.
+                if let transcriber = self.transcriber {
                     // Chain onto the previous finish so partial passes never run
                     // concurrently with the final pass (whisper ctx isn't reentrant).
                     self.processTask = Task { [prev = self.processTask] in
@@ -303,27 +306,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Inserter.copy(insertText)
                 hud.show(.copied)
                 return .clipboard
-            case (true, _) where typedCount == 0 || Inserter.canEraseTyped(self.typed):
-                // Replace the live-typed text wholesale with the raw final.
-                NSLog("Parla finish path: ax-verified replace")
-                Inserter.typeBackspaces(typedCount)
-                Inserter.insert(insertText)
-                hud.show(.polishing)
-                return .field
-            case (true, _) where Inserter.selectBackAndVerify(self.typed):
-                // Opaque field: our streamed text is now the live selection —
-                // pasting replaces exactly it.
-                NSLog("Parla finish path: select-verified replace")
-                Inserter.insert(insertText)
-                hud.show(.polishing)
-                return .field
             case (true, _):
-                // Can't prove the field still ends with our streamed text —
-                // leave it in place and offer the transcript instead.
-                NSLog("Parla finish path: unverified, clipboard only")
-                Inserter.copy(insertText)
+                // Diff-based finalize: fix only the diverging tail of the
+                // live-typed text instead of erasing and retyping all of it —
+                // the streamed text usually already equals the final text.
+                let d = LiveTyper.diff(typed: self.typed, new: insertText)
+                if typedCount == 0 {
+                    // Nothing streamed (short utterance): single paste, and
+                    // insert() already leaves insertText in the clipboard.
+                    NSLog("Parla finish path: nothing typed, focused paste")
+                    Inserter.insert(insertText)
+                } else if Inserter.canEraseTyped(self.typed) {
+                    NSLog("Parla finish path: ax-verified diff finalize (erase %d)", d.erase)
+                    Inserter.typeBackspaces(d.erase)
+                    Inserter.typeUnicode(d.append)
+                    Inserter.copy(insertText) // escape-hatch invariant: raw transcript stays in the clipboard
+                } else if d.erase == 0, d.append.isEmpty {
+                    // Streamed text already IS the final text — no keystrokes.
+                    NSLog("Parla finish path: streamed text already final")
+                    Inserter.copy(insertText)
+                } else if Inserter.selectBackAndVerify(String(self.typed.suffix(d.erase))) {
+                    // Opaque field: the diverging suffix is now the live
+                    // selection — typing replaces exactly it (as in stream()).
+                    NSLog("Parla finish path: select-verified diff finalize (erase %d)", d.erase)
+                    if d.append.isEmpty {
+                        Inserter.typeBackspaces(1) // pure shrink: delete the verified selection
+                    } else {
+                        Inserter.typeUnicode(d.append) // replaces the verified live selection
+                    }
+                    Inserter.copy(insertText)
+                } else {
+                    // Can't prove the field still ends with our streamed text —
+                    // leave it in place and offer the transcript instead.
+                    NSLog("Parla finish path: unverified, clipboard only")
+                    Inserter.copy(insertText)
+                    hud.show(.polishing)
+                    return .clipboard
+                }
                 hud.show(.polishing)
-                return .clipboard
+                return .field
             case (false, .unknown), (false, .editable):
                 NSLog("Parla finish path: focused paste")
                 Inserter.insert(insertText) // focus we couldn't stream into: paste at cursor
@@ -499,11 +520,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // isn't a dictation, and the source text is the user's, not ours.
     }
 
-    /// Live streaming pass loop: while fn is held, re-transcribe the unconfirmed
-    /// tail of the buffer and reconcile it with what's already typed via
-    /// erase+append. Runs on the processTask chain (serialized with the final
-    /// pass). Once the tail exceeds ~15s a confirmed prefix is frozen at a quiet
-    /// spot (see StreamWindow) so each pass stays O(tail), not O(n²).
+    /// ~300ms between streaming passes, sliced so fn-up (isRecording flipping
+    /// false) unblocks the queued finish() within ~50ms instead of sitting out
+    /// the full sleep as dead time.
+    private func pauseBetweenPasses() async {
+        for _ in 0..<6 {
+            guard isRecording else { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
+    /// Streaming pass loop: while fn is held, re-transcribe the unconfirmed
+    /// tail of the buffer. Runs for EVERY dictation (shadow streaming) so the
+    /// confirmed-prefix window is always built and finish() stays O(tail);
+    /// the erase+append typing is additionally gated on liveTyping. Runs on
+    /// the processTask chain (serialized with the final pass). Once the tail
+    /// exceeds ~15s a confirmed prefix is frozen at a quiet spot (see
+    /// StreamWindow) so each pass stays O(tail), not O(n²).
+    ///
+    /// Passes abort cooperatively at fn-up (shouldAbort) and return "" — every
+    /// transcribe here is followed by an isRecording recheck that BREAKS before
+    /// the result is used, so an aborted "" is never committed as a hypothesis
+    /// or a confirmed head. The handoff below still runs after a break: it only
+    /// carries state from completed passes.
     func stream(transcriber: WhisperTranscriber) async {
         let dict = store.load().dictionary
         var confirmed = "" // frozen transcript of snap[0..<cut]
@@ -513,7 +552,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         while self.isRecording {
             let snap = self.recorder.snapshot()
             guard snap.count - lastCount >= 8000 else { // <0.5s new audio, wait
-                try? await Task.sleep(nanoseconds: 300_000_000)
+                await pauseBetweenPasses()
                 continue
             }
             lastCount = snap.count
@@ -524,19 +563,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let rel = StreamWindow.quietestCut(samples: tail, near: StreamWindow.cutTarget)
                 let head = transcriber.transcribe(
                     Array(tail[..<rel]),
-                    initialPrompt: StreamWindow.tailPrompt(dictionary: dict, confirmed: confirmed))
+                    initialPrompt: StreamWindow.tailPrompt(dictionary: dict, confirmed: confirmed),
+                    shouldAbort: { !self.isRecording })
+                // Aborted head pass returns "": committing the cut would silently
+                // drop the head's text from confirmed. Only commit a completed pass.
+                guard self.isRecording else { break }
                 confirmed = StreamWindow.join(confirmed, head)
                 cut += rel
                 tail = Array(tail[rel...])
                 NSLog("Parla stream: cut at %.1fs, confirmed %d chars",
                       Double(cut) / 16_000, confirmed.count)
             }
-            let text = StreamWindow.join(
-                confirmed,
-                transcriber.transcribe(
-                    tail,
-                    initialPrompt: StreamWindow.tailPrompt(dictionary: dict, confirmed: confirmed)))
+            let tailText = transcriber.transcribe(
+                tail,
+                initialPrompt: StreamWindow.tailPrompt(dictionary: dict, confirmed: confirmed),
+                shouldAbort: { !self.isRecording })
+            // Aborted pass returns "": never treat it as a new hypothesis —
+            // live typing would erase everything the user sees. finish() takes over.
+            guard self.isRecording else { break }
+            let text = StreamWindow.join(confirmed, tailText)
             await MainActor.run {
+                // Shadow mode: window-building only, never touch the field.
+                guard self.liveTyping else { return }
                 let d = LiveTyper.diff(typed: self.typed, new: text)
                 NSLog("Parla stream: %.1fs audio -> \"%@\" (erase %d, append \"%@\")",
                       Double(snap.count) / 16_000, text, d.erase, d.append)
@@ -558,7 +606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 self.typed = text
             }
-            try? await Task.sleep(nanoseconds: 300_000_000)
+            await pauseBetweenPasses()
         }
         // Hand the window to this dictation's finish(), queued right after us on
         // the processTask chain — the chain is the synchronization.
