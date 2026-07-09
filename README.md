@@ -42,7 +42,8 @@ missing, or a broken `settings.json`).
 By default the dictation pill stays visible as a small idle capsule floating on
 screen, morphing into the full pill while you dictate. Turn off **Show pill at
 all times** in the Hub (or set `showHudAlways` to `false` in `settings.json`)
-to make it appear only during dictation.
+to make it appear only during dictation. The pill is draggable — drag it
+anywhere and it stays put across screens and sessions.
 
 **Open Parla…** (first menu item) opens the Hub — a settings window with
 General (permissions, whisper model, launch at login, shortcuts), AI Cleanup
