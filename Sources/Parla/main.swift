@@ -31,6 +31,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var liveTyping = false
     var focus = Inserter.FocusTarget.none
     var typed = ""
+    // Cleanup context is latched at fn-down and read at fn-up like liveTyping/focus.
+    var bundleID: String?
+    var appName: String?
+    var clipboardSnapshot: String?
+    var settings = Settings()
     // Command mode (⇧+fn): transform the selection captured at fn-down instead of
     // dictating. Latched at fn-down, read at fn-up like liveTyping/focus.
     var commandMode = false
@@ -89,6 +94,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 self.commandMode = false
+                self.clipboardSnapshot = NSPasteboard.general.string(forType: .string)
+                let frontApp = NSWorkspace.shared.frontmostApplication
+                self.bundleID = frontApp?.bundleIdentifier
+                self.appName = frontApp?.localizedName
+                let settings = self.store.load()
+                self.settings = settings
+                if let url = cleanupWarmURL(
+                    settings: settings, env: ProcessInfo.processInfo.environment) {
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "HEAD"
+                    request.timeoutInterval = 5
+                    URLSession.shared.dataTask(with: request).resume()
+                }
                 self.generation += 1 // invalidates any pending cleaned-swap
                 self.isRecording = true
                 // typed is NOT reset here: a still-queued finish from the previous
@@ -103,10 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // focused fields still get the final paste; no focus is
                 // clipboard-only (see finish).
                 self.focus = Inserter.focusTarget()
-                // ponytail: store.load() here re-reads settings.json on every
-                // fn-down (a file read at keypress cadence) — fine, simplest
-                // way to pick up a live liveStreamingEnabled toggle immediately.
-                self.liveTyping = self.store.load().liveStreamingEnabled
+                self.liveTyping = settings.liveStreamingEnabled
                     && self.focus == .editable && Inserter.canVerifyFocusedField()
                 // Shadow streaming: run the pass loop on EVERY dictation, not just
                 // live-typing ones, so finish() only ever pays for the unconfirmed
@@ -146,22 +161,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                     return
                 }
-                // Capture this dictation's mode now: a quick next fn-press
-                // rewrites self.liveTyping/focus before finish runs.
+                // Capture this dictation's context now: a quick next fn-press
+                // rewrites the latched state before finish runs.
                 let live = self.liveTyping
                 let focus = self.focus
                 let gen = self.generation
-                // Snapshot the frontmost app ONCE here: terminal newline-flattening
-                // must use the same target for the raw finalize and the async swap.
-                let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-                // Snapshot the app name too: cleanup is async and the user may
-                // switch apps before it resolves, so grab it while it's current.
-                let appName = NSWorkspace.shared.frontmostApplication?.localizedName
-                // Snapshot the clipboard now too, before Parla's own pipeline
-                // touches it (raw copy, cleaned copy, select-back-and-verify's
-                // probe markers). Cheap read; finish() decides whether the
-                // opt-in restoreClipboard setting actually uses it.
-                let clipboardSnapshot = NSPasteboard.general.string(forType: .string)
+                let bundleID = self.bundleID
+                let appName = self.appName
+                let clipboardSnapshot = self.clipboardSnapshot
+                let settings = self.settings
                 self.setStatus("…")
                 self.hud.show(.transcribing)
                 // Chain onto the previous work (any in-flight streaming pass):
@@ -170,7 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.processTask = Task { [prev = self.processTask] in
                     await prev?.value
                     await self.finish(samples: samples, live: live, focus: focus, gen: gen, bundleID: bundleID,
-                                       appName: appName, clipboardSnapshot: clipboardSnapshot)
+                                      appName: appName, clipboardSnapshot: clipboardSnapshot, settings: settings)
                 }
             case .cancel:
                 // A real key was pressed while fn was held (fn+arrow, Esc): abort.
@@ -212,7 +220,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setStatus(idleIcon)
     }
 
-    func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget, gen: Int, bundleID: String?, appName: String?, clipboardSnapshot: String?) async {
+    func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget, gen: Int,
+                bundleID: String?, appName: String?, clipboardSnapshot: String?, settings: Settings) async {
         let hud = self.hud // bind so main-queue hops don't capture non-Sendable self
         defer {
             DispatchQueue.main.async {
@@ -227,7 +236,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { hud.show(.error("No whisper model")) }
             return
         }
-        let settings = store.load()
         let pipeline = Pipeline(
             transcribe: { samples, prompt in transcriber.transcribe(samples, initialPrompt: prompt) },
             cleanup: { transcript, ctx in
@@ -236,7 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     .clean(transcript: transcript, context: ctx)
             },
             settings: { settings },
-            frontAppName: { NSWorkspace.shared.frontmostApplication?.localizedName })
+            frontAppName: { appName })
 
         // Raw transcript — reuse the stream's confirmed prefix so the final pass
         // is O(tail), not O(whole utterance). self.window is ours to consume:
@@ -289,6 +297,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // transcript can't run each line as a command. insertText is what actually
         // lands in the field — the async swap below must diff against IT, not raw.
         let insertText = TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(raw) : raw
+
+        let cleanTask: Task<(text: String, failed: Bool), Never>?
+        if focus != .secure {
+            cleanTask = Task { await pipeline.clean(transcript: raw) }
+        } else {
+            cleanTask = nil
+        }
 
         // Instant finalize: land the raw transcript NOW; the LLM polish swaps in
         // behind it without blocking the user.
@@ -361,12 +376,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Secure field: never send the transcript to the cloud cleanup LLM. The
         // raw on-device text is already in the clipboard with the .copied HUD.
-        guard focus != .secure else { return }
+        guard focus != .secure, let cleanTask else { return }
 
         // Async polish: cleanup, then swap raw → cleaned with the same
         // verification machinery. Still on the processTask chain, so a queued
         // next dictation starts only after this resolves (insertion order holds).
-        let cleanResult = await pipeline.clean(transcript: raw)
+        let cleanResult = await cleanTask.value
         // Same terminal guard on the cleaned text — it replaces insertText in the
         // field, so it must be flattened too, and the plan must diff flattened vs
         // flattened (insertText) or the erase/verify counts won't match the field.

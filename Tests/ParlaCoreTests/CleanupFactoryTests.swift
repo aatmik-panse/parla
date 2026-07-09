@@ -67,6 +67,21 @@ final class CleanupFactoryTests: XCTestCase {
         }
     }
 
+    func testCleanupWarmURLMatchesConfiguredProvider() {
+        var s = Settings()
+        XCTAssertNil(cleanupWarmURL(settings: s, env: [:]))
+        XCTAssertEqual(cleanupWarmURL(settings: s, env: ["ANTHROPIC_API_KEY": "k"])?.absoluteString,
+                       "https://api.anthropic.com")
+
+        s.cleanup.provider = "openai-compatible"
+        s.cleanup.baseURL = "http://localhost:11434/v1"
+        s.cleanup.model = "llama3"
+        XCTAssertEqual(cleanupWarmURL(settings: s, env: [:])?.absoluteString,
+                       "http://localhost:11434/v1")
+        s.cleanup.model = nil
+        XCTAssertNil(cleanupWarmURL(settings: s, env: [:]))
+    }
+
     func testUnknownProviderTreatedAsAnthropic() async throws {
         var s = Settings()
         s.cleanup.provider = "some-future-thing"
