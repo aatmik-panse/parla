@@ -571,6 +571,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let path = store.load().whisperModelPath ?? WhisperTranscriber.defaultModelPath()
         transcriber = try? WhisperTranscriber(modelPath: path)
         setStatus(idleIcon)
+        if let transcriber {
+            // First whisper inference pays Metal shader/graph setup (hundreds of ms) —
+            // warm it now on throwaway silence so the user's first real dictation
+            // isn't the one paying it. Queued on processTask like every other
+            // transcribe call: the whisper ctx isn't reentrant, and loadModel() can
+            // also fire post-download while the app is already live.
+            processTask = Task { [prev = processTask] in
+                await prev?.value
+                _ = transcriber.transcribe([Float](repeating: 0, count: 16_000), initialPrompt: nil)
+                NSLog("Parla: whisper warmup done")
+            }
+        }
     }
 
     func requestPermissions() {

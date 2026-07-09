@@ -17,7 +17,8 @@ public final class WhisperTranscriber {
     public init(modelPath: String) throws {
         // Metal GPU on by default — the v1.9.1 xcframework embeds the compiled Metal
         // library in the binary, so init no longer hits the old broken resource bundle.
-        let params = whisper_context_default_params()
+        var params = whisper_context_default_params()
+        params.flash_attn = true  // Metal flash attention (xcframework is v1.9.1) — off by default.
         guard let ctx = whisper_init_from_file_with_params(modelPath, params) else {
             throw TranscriberError(description: "failed to load whisper model at \(modelPath)")
         }
@@ -26,24 +27,49 @@ public final class WhisperTranscriber {
 
     deinit { whisper_free(ctx) }
 
-    public func transcribe(_ samples: [Float], initialPrompt: String?) -> String {
+    /// Whisper always encodes a full 30s window (1500 audio-ctx units, 320 samples each
+    /// at 16kHz). Restricting the encoder to the clip's length is the big latency win for
+    /// short dictations. Floor of 128 avoids quality collapse on tiny clips; +32 units
+    /// (~0.64s) is a safety margin; 1500 is the model's trained ceiling.
+    static func audioCtx(sampleCount: Int) -> Int32 {
+        Int32(min(1500, max(128, sampleCount / 320 + 32)))
+    }
+
+    public func transcribe(_ samples: [Float], initialPrompt: String?, shouldAbort: (() -> Bool)? = nil) -> String {
         var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         params.print_progress = false
         params.print_realtime = false
         params.print_special = false
         params.no_timestamps = true
+        params.temperature_inc = 0  // disable temperature-fallback re-decode → flat worst-case latency.
+        // Default caps at min(4, cores); give the encode more threads, leaving headroom for the UI.
+        params.n_threads = Int32(max(4, min(8, ProcessInfo.processInfo.activeProcessorCount - 2)))
+        params.audio_ctx = Self.audioCtx(sampleCount: samples.count)
 
-        let result: Int32 = samples.withUnsafeBufferPointer { buf in
-            if let prompt = initialPrompt, !prompt.isEmpty {
-                // initial_prompt must stay alive through whisper_full → nested withCString.
-                return prompt.withCString { c in
-                    params.initial_prompt = c
-                    return whisper_full(ctx, params, buf.baseAddress, Int32(buf.count))
-                }
+        // A C function pointer can't capture a Swift closure — pass the boxed closure through
+        // abort_callback_user_data and unwrap it in the C-convention trampoline. Return true aborts.
+        let abortBox = shouldAbort.map { AbortBox($0) }
+        if let box = abortBox {
+            params.abort_callback = { data in
+                guard let data else { return false }
+                return Unmanaged<AbortBox>.fromOpaque(data).takeUnretainedValue().shouldAbort()
             }
-            return whisper_full(ctx, params, buf.baseAddress, Int32(buf.count))
+            params.abort_callback_user_data = Unmanaged.passUnretained(box).toOpaque()
         }
-        guard result == 0 else { return "" }
+
+        let result: Int32 = withExtendedLifetime(abortBox) {
+            samples.withUnsafeBufferPointer { buf in
+                if let prompt = initialPrompt, !prompt.isEmpty {
+                    // initial_prompt must stay alive through whisper_full → nested withCString.
+                    return prompt.withCString { c in
+                        params.initial_prompt = c
+                        return whisper_full(ctx, params, buf.baseAddress, Int32(buf.count))
+                    }
+                }
+                return whisper_full(ctx, params, buf.baseAddress, Int32(buf.count))
+            }
+        }
+        guard result == 0 else { return "" }  // non-zero on error or cooperative abort.
 
         var text = ""
         for i in 0..<whisper_full_n_segments(ctx) {
@@ -65,4 +91,11 @@ public final class WhisperTranscriber {
         }
         return text.split(separator: " ").allSatisfy(isMarker) ? "" : text
     }
+}
+
+/// Reference box so a Swift abort closure survives the trip through whisper's
+/// C `void *` user-data pointer.
+private final class AbortBox {
+    let shouldAbort: () -> Bool
+    init(_ shouldAbort: @escaping () -> Bool) { self.shouldAbort = shouldAbort }
 }

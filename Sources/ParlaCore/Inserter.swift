@@ -17,8 +17,10 @@ public enum Inserter {
     /// ponytail: no clipboard save/restore (racy per architecture.md); add only if users complain.
     public static func insert(_ text: String) {
         copy(text)
-        // Give the pasteboard a beat before the keystroke lands.
-        usleep(50_000)
+        // Give the pasteboard a beat before the keystroke lands. setString is
+        // synchronous, so this is only settle time for the pasteboard server —
+        // not a wait for the write itself.
+        usleep(20_000)
         postCmdV()
     }
 
