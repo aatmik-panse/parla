@@ -117,12 +117,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSLog("Parla mic start failed: \(error)")
                     return
                 }
-                // Only stream when final replacement is verifiable. Opaque
-                // focused fields still get the final paste; no focus is
+                // Focused field gets the final paste at fn-up; no focus is
                 // clipboard-only (see finish).
                 self.focus = Inserter.focusTarget()
-                self.liveTyping = settings.liveStreamingEnabled
-                    && self.focus == .editable && Inserter.canVerifyFocusedField()
+                // Live in-field typing is hard-disabled: keystrokes posted while
+                // the user physically holds fn merge with the modifier (fn+A
+                // opens the Dock, ⇧← becomes select-to-Home), and Chromium never
+                // answers the ⌘C verify probe — revisions stall on the first
+                // wrong hypothesis and the finalize demotes to clipboard-only.
+                // Shadow streaming below keeps the speed win; the transcript
+                // lands as ONE paste at fn-up, after the modifier is released.
+                // Re-enable only with a verified fix for the fn-merge + probe.
+                self.liveTyping = false
                 // Shadow streaming: run the pass loop on EVERY dictation, not just
                 // live-typing ones, so finish() only ever pays for the unconfirmed
                 // tail. Actual typing inside the loop is gated on liveTyping.

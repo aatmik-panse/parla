@@ -49,35 +49,26 @@ Dictation** / a **Recent**
 submenu (last 8 dictations, backed by a local 50-entry history) with
 **Clear History** — see `historyEnabled` below.
 
-## Live streaming
+## Shadow streaming
 
-While you hold the hotkey, text streams into the focused text field in
-near-real-time. Streaming only starts when the field's final text is
-AX-verifiable (so Parla can safely reconcile it); fields that merely look
-editable but can't be read back skip streaming and get a single paste on
-release instead, and no focused field means clipboard-only. As whisper revises
-earlier words, Parla backspaces the wrong tail and retypes it — so **don't
-click or move the cursor while dictating**, or the backspaces land in the
-wrong place. Dictations longer than ~15s freeze a confirmed prefix at the
-nearest quiet moment so each pass only re-transcribes the recent tail, not the
-whole recording.
+Transcription runs *while* you speak, but the field is never touched until you
+release the hotkey: keystrokes posted while fn is physically held merge with
+the modifier (fn+A opens the Dock) and Chromium apps don't answer the
+verification probe, so mid-speech typing is disabled. Instead, Parla
+transcribes in the background as you talk — dictations longer than ~15s freeze
+a confirmed prefix at the nearest quiet moment so each pass only
+re-transcribes the recent tail — and on release only the last few seconds of
+unheard audio need a whisper pass. Release latency is therefore independent of
+how long you dictated; an in-flight pass is aborted the moment you let go.
 
-Transcription always runs *while* you speak ("shadow streaming"), even with
-`liveStreamingEnabled: false` — the field is only touched when live typing is
-on, but the confirmed-prefix window is built either way, so on release Parla
-only transcribes the last few seconds of unheard audio instead of the whole
-utterance. Release latency is therefore independent of how long you dictated;
-an in-flight streaming pass is aborted the moment you let go.
-
-On release, the raw transcript lands immediately (HUD: "Transcribing…", then
-"✓ · polishing…"); the LLM-cleaned version swaps in behind it moments later via
-a diff (only the changed tail is backspaced and retyped), landing on one of:
+On release, the whole raw transcript lands as a single paste into the focused
+field (HUD: "Transcribing…", then "✓ · polishing…"); no focused field means
+clipboard-only, and password fields are clipboard-only and never sent to the
+cleanup LLM. The LLM-cleaned version swaps in behind it moments later via a
+diff (only the changed tail is backspaced and retyped), landing on one of:
 "✓ Pasted", "✓ In clipboard", "✓ cleaned in clipboard" (swap couldn't be
 verified — cleaned text parked in the clipboard instead), or "✓ raw (cleanup
-failed)". Cancelling (a keypress while fn is held) shows "✕ Cancelled" and
-undoes any streamed text. Set `liveStreamingEnabled: false` to disable the
-mid-stream word-by-word retyping while keeping the instant raw-then-polish
-finalize on release.
+failed)". Cancelling (a keypress while fn is held) shows "✕ Cancelled".
 
 ## Command mode
 
@@ -113,7 +104,7 @@ you fix it. Fields:
 - `anthropicApiKey` — API key for cleanup; the menu-bar **Set API Key…** item writes this field for you. The `ANTHROPIC_API_KEY` environment variable takes precedence; if neither is set, Parla inserts the raw transcript.
 - `whisperModelPath` — absolute path to a ggml whisper model. Defaults to the model downloaded by `scripts/download-model.sh`.
 - `historyEnabled` — keep a local log of the last 50 dictations (raw + cleaned + app name) at `~/Library/Application Support/Parla/history.json`, for the menu's Paste Last Dictation / Recent. Default `true`. Secure-field and cancelled dictations are never recorded regardless of this setting.
-- `liveStreamingEnabled` — retype the field word-by-word as whisper revises its guess while you're still holding the hotkey. Default `true`; turning it off does not affect the instant raw finalize on release.
+- `liveStreamingEnabled` — currently ignored: mid-speech typing is hard-disabled (held-fn keystrokes merge with the modifier; Chromium fields fail the verify probe). Transcription still runs while you speak; the text lands as one paste on release.
 - `restoreClipboard` — after a dictation's cleaned text has verifiably landed in a field, put the clipboard back to whatever it held before you started dictating (instead of leaving the dictated text there as an escape hatch). Default `false`. Only string clipboard contents are snapshotted/restored — a non-text clipboard (e.g. an image) is left untouched.
 
 ## Cleanup providers
