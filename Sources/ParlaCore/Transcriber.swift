@@ -27,14 +27,6 @@ public final class WhisperTranscriber {
 
     deinit { whisper_free(ctx) }
 
-    /// Whisper always encodes a full 30s window (1500 audio-ctx units, 320 samples each
-    /// at 16kHz). Restricting the encoder to the clip's length is the big latency win for
-    /// short dictations. Floor of 128 avoids quality collapse on tiny clips; +32 units
-    /// (~0.64s) is a safety margin; 1500 is the model's trained ceiling.
-    static func audioCtx(sampleCount: Int) -> Int32 {
-        Int32(min(1500, max(128, sampleCount / 320 + 32)))
-    }
-
     public func transcribe(_ samples: [Float], initialPrompt: String?, shouldAbort: (() -> Bool)? = nil) -> String {
         var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         params.print_progress = false
@@ -44,7 +36,10 @@ public final class WhisperTranscriber {
         params.temperature_inc = 0  // disable temperature-fallback re-decode → flat worst-case latency.
         // Default caps at min(4, cores); give the encode more threads, leaving headroom for the UI.
         params.n_threads = Int32(max(4, min(8, ProcessInfo.processInfo.activeProcessorCount - 2)))
-        params.audio_ctx = Self.audioCtx(sampleCount: samples.count)
+        // audio_ctx stays at the default full window: measured A/B showed restricting
+        // it to the clip length collapses one-word clips into garbage ("branch" → "*")
+        // and triggers multi-second retry storms, while a full 30s encode is only
+        // ~130-200ms warm with Metal + flash-attn.
 
         // A C function pointer can't capture a Swift closure — pass the boxed closure through
         // abort_callback_user_data and unwrap it in the C-convention trampoline. Return true aborts.

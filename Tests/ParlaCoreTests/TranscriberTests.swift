@@ -16,16 +16,6 @@ final class TranscriberTests: XCTestCase {
         XCTAssertThrowsError(try WhisperTranscriber(modelPath: "/nonexistent.bin"))
     }
 
-    func testAudioCtxScaling() {
-        // Floor: tiny clips clamp to 128.
-        XCTAssertEqual(WhisperTranscriber.audioCtx(sampleCount: 0), 128)
-        XCTAssertEqual(WhisperTranscriber.audioCtx(sampleCount: 16_000), 128)  // 1s → 82, floored.
-        // Linear in the middle: 3s = 48000 samples → 48000/320 + 32 = 182.
-        XCTAssertEqual(WhisperTranscriber.audioCtx(sampleCount: 48_000), 182)
-        // Ceiling: full 30s window and beyond clamp to 1500.
-        XCTAssertEqual(WhisperTranscriber.audioCtx(sampleCount: 480_000), 1500)
-        XCTAssertEqual(WhisperTranscriber.audioCtx(sampleCount: 1_000_000), 1500)
-    }
 
     func testBlankAudioMarkerStripped() {
         XCTAssertEqual(WhisperTranscriber.stripNonSpeech("[BLANK_AUDIO]"), "")
