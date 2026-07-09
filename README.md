@@ -43,7 +43,9 @@ The menu also shows live Microphone/Accessibility permission status
 (click an unfulfilled one to jump to System Settings), a one-click
 **Download model (base.en)** item when no model is loaded, a
 **⚠️ settings.json invalid** item when the config fails to parse, a
-**Launch at Login** toggle, and **Paste Last Dictation** / a **Recent**
+**Launch at Login** toggle, a **Set API Key…** box (paste your Anthropic key
+without touching the terminal or the settings file), and **Paste Last
+Dictation** / a **Recent**
 submenu (last 8 dictations, backed by a local 50-entry history) with
 **Clear History** — see `historyEnabled` below.
 
@@ -101,7 +103,7 @@ you fix it. Fields:
 - `dictionary` — array of exact spellings (names, jargon) to bias transcription and cleanup, e.g. `["Parla", "whisper.cpp"]`.
 - `snippets` — object mapping a spoken trigger phrase to its expansion, e.g. `{"my address": "123 Main St"}`.
 - `cleanupModel` — Anthropic model id for cleanup (default `claude-haiku-4-5`).
-- `anthropicApiKey` — API key for cleanup. The `ANTHROPIC_API_KEY` environment variable takes precedence; if neither is set, Parla inserts the raw transcript.
+- `anthropicApiKey` — API key for cleanup; the menu-bar **Set API Key…** item writes this field for you. The `ANTHROPIC_API_KEY` environment variable takes precedence; if neither is set, Parla inserts the raw transcript.
 - `whisperModelPath` — absolute path to a ggml whisper model. Defaults to the model downloaded by `scripts/download-model.sh`.
 - `historyEnabled` — keep a local log of the last 50 dictations (raw + cleaned + app name) at `~/Library/Application Support/Parla/history.json`, for the menu's Paste Last Dictation / Recent. Default `true`. Secure-field and cancelled dictations are never recorded regardless of this setting.
 - `liveStreamingEnabled` — retype the field word-by-word as whisper revises its guess while you're still holding the hotkey. Default `true`; turning it off does not affect the instant raw finalize on release.

@@ -612,6 +612,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(store.url)
     }
 
+    /// Paste-an-API-key box: writes anthropicApiKey to settings.json, which
+    /// every dictation re-reads — no in-memory refresh needed.
+    @objc func setAPIKey() {
+        var settings = store.load()
+        if store.lastError != nil {
+            // Saving over a broken settings.json would clobber the user's file
+            // with defaults — send them to fix it instead (same rule as openSettings).
+            NSWorkspace.shared.open(store.url)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Anthropic API Key"
+        alert.informativeText = "Used to clean up transcripts. Stored in settings.json (remove it there to clear)."
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.placeholderString = settings.anthropicApiKey == nil ? "sk-ant-…" : "•••••••• (key currently set)"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        NSApp.activate(ignoringOtherApps: true) // LSUIElement app: modal needs focus
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return } // empty Save = no change, not key removal
+        settings.anthropicApiKey = key
+        do { try store.save(settings) } catch { hud.show(.error("Couldn't save settings")) }
+    }
+
     @objc func openPrivacyPane(_ sender: NSMenuItem) {
         guard let pane = sender.representedObject as? String,
               let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")
@@ -710,6 +737,9 @@ extension AppDelegate: NSMenuDelegate {
         menu.addItem(launch)
         menu.addItem(.separator())
 
+        let apiKey = NSMenuItem(title: "Set API Key…", action: #selector(setAPIKey), keyEquivalent: "")
+        apiKey.target = self
+        menu.addItem(apiKey)
         let open = NSMenuItem(title: "Open Settings File", action: #selector(openSettings), keyEquivalent: "")
         open.target = self
         menu.addItem(open)

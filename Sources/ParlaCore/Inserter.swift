@@ -79,6 +79,11 @@ public enum Inserter {
                let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) {
                 down.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
                 up.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
+                // Clear inherited modifiers: the user is physically holding fn
+                // (push-to-talk), and virtualKey 0 is the A key — without this,
+                // every chunk lands as fn+A, macOS's "Show the Dock" shortcut.
+                down.flags = []
+                up.flags = []
                 post(down)
                 post(up)
             }
@@ -95,6 +100,8 @@ public enum Inserter {
         for _ in 0..<n {
             if let down = CGEvent(keyboardEventSource: src, virtualKey: delKey, keyDown: true),
                let up = CGEvent(keyboardEventSource: src, virtualKey: delKey, keyDown: false) {
+                down.flags = [] // held fn would turn this into forward-delete
+                up.flags = []
                 post(down)
                 post(up)
             }
@@ -266,6 +273,7 @@ public enum Inserter {
         }
         usleep(80_000)
         let pb = NSPasteboard.general
+        let prior = pb.string(forType: .string)
         var marker = "__PARLA_COPY_PROBE__\(UUID().uuidString)"
         while marker == expected {
             marker = "__PARLA_COPY_PROBE__\(UUID().uuidString)"
@@ -286,6 +294,10 @@ public enum Inserter {
               copied == marker ? "copy-timeout" : "mismatch",
               expected.count,
               copied?.count ?? -1)
+        if copied == marker { // probe never got overwritten — take it back off
+            pb.clearContents() // don't leak the probe into clipboard history
+            if let prior { pb.setString(prior, forType: .string) }
+        }
         postKey(124) // → collapse selection, cursor back to the end
         return false
     }
