@@ -58,7 +58,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let m = HubModel(store: store, history: history)
         m.onDownloadModel = { [weak self] in self?.downloadModel() }
         m.onOpenSettingsFile = { [weak self] in self?.openSettings() }
-        m.onSaved = { [weak self] in self?.hud.showAlways = self?.store.load().showHudAlways ?? true }
+        m.onSaved = { [weak self] in
+            guard let self else { return }
+            let s = self.store.load()
+            self.hud.idleBarSize = HUD.idleSize(s.hudIdleSize)
+            self.hud.showAlways = s.showHudAlways
+        }
         m.modelLoaded = transcriber != nil
         return m
     }()
@@ -74,7 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
         requestPermissions()
         loadModel()
-        hud.showAlways = store.load().showHudAlways
+        let launchSettings = store.load()
+        hud.idleBarSize = HUD.idleSize(launchSettings.hudIdleSize)
+        hud.showAlways = launchSettings.showHudAlways
 
         recorder.onLevel = { [weak self] level in
             DispatchQueue.main.async { self?.hud.push(level: level) }
@@ -116,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.appName = frontApp?.localizedName
                 let settings = self.store.load()
                 self.settings = settings
+                self.hud.idleBarSize = HUD.idleSize(settings.hudIdleSize)
                 self.hud.showAlways = settings.showHudAlways
                 if let url = cleanupWarmURL(
                     settings: settings, env: ProcessInfo.processInfo.environment) {

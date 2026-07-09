@@ -33,6 +33,9 @@ public struct Settings: Codable, Equatable {
     // Keep the dictation pill floating as a small idle capsule at all times,
     // morphing into the full pill during dictation. Off ⇒ transient toast only.
     public var showHudAlways: Bool = true
+    // Idle bar size preset: "small" | "medium" | "large". Unknown values fall
+    // back to small at the HUD layer.
+    public var hudIdleSize: String = "small"
     // Mid-stream live retyping while fn is held. Off ⇒ instant raw finalize on
     // fn-up still happens; only the word-by-word revision stream is skipped.
     public var liveStreamingEnabled: Bool = true
@@ -55,6 +58,7 @@ public struct Settings: Codable, Equatable {
         cleanup = try c.decodeIfPresent(CleanupSettings.self, forKey: .cleanup) ?? cleanup
         historyEnabled = try c.decodeIfPresent(Bool.self, forKey: .historyEnabled) ?? historyEnabled
         showHudAlways = try c.decodeIfPresent(Bool.self, forKey: .showHudAlways) ?? showHudAlways
+        hudIdleSize = try c.decodeIfPresent(String.self, forKey: .hudIdleSize) ?? hudIdleSize
         liveStreamingEnabled = try c.decodeIfPresent(Bool.self, forKey: .liveStreamingEnabled) ?? liveStreamingEnabled
         restoreClipboard = try c.decodeIfPresent(Bool.self, forKey: .restoreClipboard) ?? restoreClipboard
     }

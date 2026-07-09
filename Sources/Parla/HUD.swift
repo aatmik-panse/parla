@@ -22,7 +22,6 @@ final class HUD: @unchecked Sendable {
     private let label = NSTextField(labelWithString: "")
     private let dot = NSView()
     private let waveform = WaveformView()
-    private let mic = NSImageView()
     private var hideItem: DispatchWorkItem?
     // Currently collapsed to the mini idle capsule (vs. the full active pill).
     private var isIdle = false
@@ -32,7 +31,27 @@ final class HUD: @unchecked Sendable {
     private static let originKey = "hudOrigin"
 
     private static let activePillFrame = NSRect(x: 12, y: 12, width: 260, height: 44)
-    private static let idlePillFrame = NSRect(x: 110, y: 18, width: 64, height: 32)
+
+    /// Idle bar size, from settings.hudIdleSize. Applied live when changed while idle.
+    var idleBarSize = NSSize(width: 44, height: 10) {
+        didSet {
+            guard idleBarSize != oldValue, isIdle else { return }
+            collapse(animated: false)
+        }
+    }
+    private var idlePillFrame: NSRect {
+        NSRect(x: (panel.frame.width - idleBarSize.width) / 2, y: 18,
+               width: idleBarSize.width, height: idleBarSize.height)
+    }
+
+    /// Map the settings preset to a bar size; unknown strings fall back to small.
+    static func idleSize(_ preset: String) -> NSSize {
+        switch preset {
+        case "large": return NSSize(width: 88, height: 18)
+        case "medium": return NSSize(width: 64, height: 14)
+        default: return NSSize(width: 44, height: 10)
+        }
+    }
 
     /// Keep the pill floating as a mini idle capsule whenever not dictating.
     var showAlways = false {
@@ -96,17 +115,6 @@ final class HUD: @unchecked Sendable {
         label.isEditable = false
         pill.addSubview(label)
 
-        // Idle-only mic glyph, centered in the full pill. Flexible margins keep
-        // it centered as the pill animates down to the mini capsule.
-        mic.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Parla")
-        mic.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
-        mic.contentTintColor = .white
-        mic.imageScaling = .scaleProportionallyUpOrDown
-        mic.frame = NSRect(x: 122, y: 14, width: 16, height: 16)
-        mic.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin]
-        mic.isHidden = true
-        pill.addSubview(mic)
-
         // Restore a pinned drag position, if the user set one, and persist new ones.
         if let o = UserDefaults.standard.array(forKey: Self.originKey) as? [Double], o.count == 2 {
             draggedOrigin = NSPoint(x: o[0], y: o[1])
@@ -126,7 +134,7 @@ final class HUD: @unchecked Sendable {
         panel.orderFrontRegardless()
     }
 
-    /// Collapse to the mini idle capsule — mic only, dot/waveform/label hidden.
+    /// Collapse to the slim bare idle bar — dot/waveform/label hidden.
     /// Moves the panel to the idle auto-position (or a passed target screen),
     /// animating the panel origin alongside the pill morph.
     private func collapse(animated: Bool, to screen: NSScreen? = nil) {
@@ -134,19 +142,18 @@ final class HUD: @unchecked Sendable {
         dot.isHidden = true
         waveform.isHidden = true
         label.isHidden = true
-        mic.isHidden = false
         let target = (screen ?? currentScreen()).map { autoOrigin(idle: true, on: $0) }
         if animated {
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.18
-                pill.animator().frame = HUD.idlePillFrame
+                pill.animator().frame = idlePillFrame
                 if let target { panel.animator().setFrame(NSRect(origin: target, size: panel.frame.size), display: true) }
             }
         } else {
-            pill.frame = HUD.idlePillFrame
+            pill.frame = idlePillFrame
             if let target { panel.setFrameOrigin(target) }
         }
-        pill.layer?.cornerRadius = 16
+        pill.layer?.cornerRadius = idleBarSize.height / 2
     }
 
     /// Expand to the full active pill. Animates (pill + panel origin) only when
@@ -155,7 +162,6 @@ final class HUD: @unchecked Sendable {
     private func expand(to screen: NSScreen? = nil) {
         let wasIdle = isIdle
         isIdle = false
-        mic.isHidden = true
         label.isHidden = false
         let target = (screen ?? currentScreen()).map { autoOrigin(idle: false, on: $0) }
         if wasIdle {
@@ -291,7 +297,7 @@ final class HUD: @unchecked Sendable {
 /// The pill view, draggable by the user. Manual drag (not performDrag /
 /// isMovableByWindowBackground) so we get a clean end-of-drag hook and never
 /// confuse a programmatic panel move with a user drag. Subviews (label, dot,
-/// waveform, mic) don't handle mouseDown, so it bubbles up to here.
+/// waveform) don't handle mouseDown, so it bubbles up to here.
 final class DraggablePill: NSView {
     /// Called after a real drag (not a plain click) with the window's final origin.
     var onDragEnd: ((NSPoint) -> Void)?

@@ -54,6 +54,17 @@ struct GeneralPage: View {
                         .labelsHidden()
                 }
                 HubDivider()
+                HubRow("Idle pill size", detail: "Size of the bar when not dictating") {
+                    Picker("", selection: $model.settings.hudIdleSize) {
+                        Text("Small").tag("small")
+                        Text("Medium").tag("medium")
+                        Text("Large").tag("large")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 210)
+                }
+                HubDivider()
                 HubRow("Settings file", detail: "Everything here is stored in settings.json") {
                     Button("Open File") { model.onOpenSettingsFile() }
                         .buttonStyle(HubButtonStyle())
