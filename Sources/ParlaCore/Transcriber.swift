@@ -41,7 +41,10 @@ public final class WhisperTranscriber {
         params.print_realtime = false
         params.print_special = false
         params.no_timestamps = true
-        params.temperature_inc = 0  // disable temperature-fallback re-decode → flat worst-case latency.
+        // temperature fallback stays ENABLED (default temperature_inc): it's whisper's
+        // guardrail against greedy-decode repetition loops ("same sentence × 28") —
+        // observed in the wild when this was set to 0. Clean audio still decodes once;
+        // only degenerate decodes pay for a retry.
         // Default caps at min(4, cores); give the encode more threads, leaving headroom for the UI.
         params.n_threads = Int32(max(4, min(8, ProcessInfo.processInfo.activeProcessorCount - 2)))
         params.audio_ctx = Self.audioCtx(sampleCount: samples.count)
