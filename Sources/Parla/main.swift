@@ -51,6 +51,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var downloadTask: URLSessionDownloadTask?
     var downloadObservation: NSKeyValueObservation?
 
+    // Hub: the management window. Lazy so tray-only sessions never build it.
+    lazy var hubModel: HubModel = {
+        let m = HubModel(store: store, history: history)
+        m.onDownloadModel = { [weak self] in self?.downloadModel() }
+        m.onOpenSettingsFile = { [weak self] in self?.openSettings() }
+        m.modelLoaded = transcriber != nil
+        return m
+    }()
+    lazy var hubController = HubWindowController(model: hubModel)
+
+    @objc func openHub() { hubController.show() }
+
     /// Where the instant raw finalize landed — decides how the cleaned swap applies.
     enum Landing: Sendable { case field, clipboard }
 
@@ -636,6 +648,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func loadModel() {
         let path = store.load().whisperModelPath ?? WhisperTranscriber.defaultModelPath()
         transcriber = try? WhisperTranscriber(modelPath: path)
+        hubModel.modelLoaded = transcriber != nil
         setStatus(idleIcon)
         if let transcriber {
             // First whisper inference pays Metal shader/graph setup (hundreds of ms) —
@@ -743,9 +756,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // KVO on the task's own Progress — least code for a live percentage,
         // no delegate class needed.
         downloadObservation = task.progress.observe(\.fractionCompleted, options: [.new]) { [weak self] progress, _ in
-            DispatchQueue.main.async { self?.setStatus("⬇️ \(Int(progress.fractionCompleted * 100))%") }
+            DispatchQueue.main.async {
+                self?.setStatus("⬇️ \(Int(progress.fractionCompleted * 100))%")
+                self?.hubModel.downloadProgress = progress.fractionCompleted
+            }
         }
         downloadTask = task
+        hubModel.downloadProgress = 0
         task.resume()
     }
 
@@ -765,6 +782,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func finishDownload(error: Error?) {
         downloadObservation = nil
         downloadTask = nil
+        hubModel.downloadProgress = nil
         if let error {
             NSLog("Parla model download failed: \(error)")
             hud.show(.error("Model download failed"))
@@ -780,6 +798,10 @@ extension AppDelegate: NSMenuDelegate {
     /// settings status is always current — cheaper than tracking diffs.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        let openHubItem = NSMenuItem(title: "Open Parla…", action: #selector(openHub), keyEquivalent: "")
+        openHubItem.target = self
+        menu.addItem(openHubItem)
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Hold fn 🌐 to dictate", action: nil, keyEquivalent: ""))
         menu.addItem(.separator())
 
