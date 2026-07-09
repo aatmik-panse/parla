@@ -62,6 +62,13 @@ wrong place. Dictations longer than ~15s freeze a confirmed prefix at the
 nearest quiet moment so each pass only re-transcribes the recent tail, not the
 whole recording.
 
+Transcription always runs *while* you speak ("shadow streaming"), even with
+`liveStreamingEnabled: false` — the field is only touched when live typing is
+on, but the confirmed-prefix window is built either way, so on release Parla
+only transcribes the last few seconds of unheard audio instead of the whole
+utterance. Release latency is therefore independent of how long you dictated;
+an in-flight streaming pass is aborted the moment you let go.
+
 On release, the raw transcript lands immediately (HUD: "Transcribing…", then
 "✓ · polishing…"); the LLM-cleaned version swaps in behind it moments later via
 a diff (only the changed tail is backspaced and retyped), landing on one of:

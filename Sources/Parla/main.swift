@@ -310,8 +310,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let landing: Landing = await MainActor.run {
             let typedCount = self.typed.count // graphemes streamed live so far
             defer { self.typed = "" }
+            // Never log the transcript for a secure field — it's plausibly a
+            // password, and unified logging is readable in Console.
             NSLog("Parla finish: raw=%@ live=%d focus=%d typed=%d",
-                  insertText, live ? 1 : 0, focus == .none ? 0 : 1, typedCount)
+                  focus == .secure ? "<secure>" : insertText, live ? 1 : 0, focus == .none ? 0 : 1, typedCount)
             switch (live, focus) {
             case (_, .secure):
                 // Password field: on-device transcript to the clipboard only.
@@ -642,7 +644,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // also fire post-download while the app is already live.
             processTask = Task { [prev = processTask] in
                 await prev?.value
-                _ = transcriber.transcribe([Float](repeating: 0, count: 16_000), initialPrompt: nil)
+                // Preemptible: a dictation started before warmup finishes takes
+                // priority — it eats the cold start instead of queueing behind it.
+                _ = transcriber.transcribe([Float](repeating: 0, count: 16_000), initialPrompt: nil,
+                                           shouldAbort: { self.isRecording })
                 NSLog("Parla: whisper warmup done")
             }
         }
