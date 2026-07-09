@@ -22,6 +22,7 @@ final class HubModel: ObservableObject {
     // Wired by AppDelegate to its existing actions.
     var onDownloadModel: () -> Void = {}
     var onOpenSettingsFile: () -> Void = {}
+    var onSaved: () -> Void = {}
 
     @Published var settings = Settings() { didSet { touch() } }
     @Published var words: [WordRow] = [] { didSet { touch() } }
@@ -128,6 +129,7 @@ final class HubModel: ObservableObject {
         do {
             try store.save(s)
             saveError = nil
+            onSaved()
         } catch {
             saveError = "Couldn't save settings: \(error.localizedDescription)"
         }

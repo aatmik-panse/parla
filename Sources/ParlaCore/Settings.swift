@@ -30,6 +30,9 @@ public struct Settings: Codable, Equatable {
     // Local-only dictation history (menu paste-last / Recent). Never leaves the
     // machine; secure-field dictations are never recorded regardless.
     public var historyEnabled: Bool = true
+    // Keep the dictation pill floating as a small idle capsule at all times,
+    // morphing into the full pill during dictation. Off ⇒ transient toast only.
+    public var showHudAlways: Bool = true
     // Mid-stream live retyping while fn is held. Off ⇒ instant raw finalize on
     // fn-up still happens; only the word-by-word revision stream is skipped.
     public var liveStreamingEnabled: Bool = true
@@ -51,6 +54,7 @@ public struct Settings: Codable, Equatable {
         whisperModelPath = try c.decodeIfPresent(String.self, forKey: .whisperModelPath) ?? whisperModelPath
         cleanup = try c.decodeIfPresent(CleanupSettings.self, forKey: .cleanup) ?? cleanup
         historyEnabled = try c.decodeIfPresent(Bool.self, forKey: .historyEnabled) ?? historyEnabled
+        showHudAlways = try c.decodeIfPresent(Bool.self, forKey: .showHudAlways) ?? showHudAlways
         liveStreamingEnabled = try c.decodeIfPresent(Bool.self, forKey: .liveStreamingEnabled) ?? liveStreamingEnabled
         restoreClipboard = try c.decodeIfPresent(Bool.self, forKey: .restoreClipboard) ?? restoreClipboard
     }

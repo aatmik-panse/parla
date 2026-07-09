@@ -18,10 +18,29 @@ final class HUD: @unchecked Sendable {
     }
 
     private let panel: NSPanel
+    private let pill = NSView(frame: HUD.activePillFrame)
     private let label = NSTextField(labelWithString: "")
     private let dot = NSView()
     private let waveform = WaveformView()
+    private let mic = NSImageView()
     private var hideItem: DispatchWorkItem?
+    // Currently collapsed to the mini idle capsule (vs. the full active pill).
+    private var isIdle = false
+
+    private static let activePillFrame = NSRect(x: 12, y: 12, width: 260, height: 44)
+    private static let idlePillFrame = NSRect(x: 110, y: 18, width: 64, height: 32)
+
+    /// Keep the pill floating as a mini idle capsule whenever not dictating.
+    var showAlways = false {
+        didSet {
+            guard showAlways != oldValue else { return }
+            if showAlways {
+                if !panel.isVisible { showIdle() }
+            } else if isIdle {
+                panel.orderOut(nil)
+            }
+        }
+    }
 
     init() {
         // Panel is larger than the pill so the lavender glow has room to render.
@@ -40,7 +59,6 @@ final class HUD: @unchecked Sendable {
         // purple ring and soft lavender glow. Static colors in both appearances.
         let container = NSView(frame: panel.contentView!.bounds)
         container.autoresizingMask = [.width, .height]
-        let pill = NSView(frame: NSRect(x: 12, y: 12, width: 260, height: 44))
         pill.autoresizingMask = [.width, .height]
         pill.wantsLayer = true
         pill.layer?.backgroundColor = NSColor(srgbRed: 0.102, green: 0.102, blue: 0.102, alpha: 0.97).cgColor // vast-950
@@ -70,11 +88,74 @@ final class HUD: @unchecked Sendable {
         label.isBezeled = false
         label.isEditable = false
         pill.addSubview(label)
+
+        // Idle-only mic glyph, centered in the full pill. Flexible margins keep
+        // it centered as the pill animates down to the mini capsule.
+        mic.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Parla")
+        mic.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        mic.contentTintColor = .white
+        mic.imageScaling = .scaleProportionallyUpOrDown
+        mic.frame = NSRect(x: 122, y: 14, width: 16, height: 16)
+        mic.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin]
+        mic.isHidden = true
+        pill.addSubview(mic)
+    }
+
+    /// Show the idle capsule (position on the active screen if the panel was off).
+    private func showIdle() {
+        hideItem?.cancel()
+        hideItem = nil
+        if !panel.isVisible { position() }
+        collapse(animated: false)
+        panel.orderFrontRegardless()
+    }
+
+    /// Collapse to the mini idle capsule — mic only, dot/waveform/label hidden.
+    private func collapse(animated: Bool) {
+        isIdle = true
+        dot.isHidden = true
+        waveform.isHidden = true
+        label.isHidden = true
+        mic.isHidden = false
+        if animated {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.18
+                pill.animator().frame = HUD.idlePillFrame
+            }
+        } else {
+            pill.frame = HUD.idlePillFrame
+        }
+        pill.layer?.cornerRadius = 16
+    }
+
+    /// Expand to the full active pill. Animates only when coming from idle.
+    private func expand() {
+        let wasIdle = isIdle
+        isIdle = false
+        mic.isHidden = true
+        label.isHidden = false
+        if wasIdle {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.18
+                pill.animator().frame = HUD.activePillFrame
+            }
+        } else {
+            pill.frame = HUD.activePillFrame
+        }
+        pill.layer?.cornerRadius = 22
+    }
+
+    /// Settle after a dictation: collapse to idle when always-on, else order out.
+    private func settle() {
+        hideItem?.cancel()
+        hideItem = nil
+        if showAlways { collapse(animated: true) } else { panel.orderOut(nil) }
     }
 
     func show(_ state: State) {
         hideItem?.cancel()
         hideItem = nil
+        expand()
         if case .listening = state {
             label.frame = NSRect(x: 158, y: 12, width: 92, height: 20)
         } else {
@@ -140,14 +221,10 @@ final class HUD: @unchecked Sendable {
 
     func push(level: Float) { waveform.push(level: level) }
 
-    func hide() {
-        hideItem?.cancel()
-        hideItem = nil
-        panel.orderOut(nil)
-    }
+    func hide() { settle() }
 
     private func scheduleHide() {
-        let item = DispatchWorkItem { [weak self] in self?.panel.orderOut(nil) }
+        let item = DispatchWorkItem { [weak self] in self?.settle() }
         hideItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: item)
     }

@@ -39,6 +39,11 @@ The menu-bar icon reflects state: 🎤 idle · 🔴 recording · … processing 
 N% downloading the model · ⚠️ problem (no model, mic/Accessibility permission
 missing, or a broken `settings.json`).
 
+By default the dictation pill stays visible as a small idle capsule floating on
+screen, morphing into the full pill while you dictate. Turn off **Show pill at
+all times** in the Hub (or set `showHudAlways` to `false` in `settings.json`)
+to make it appear only during dictation.
+
 **Open Parla…** (first menu item) opens the Hub — a settings window with
 General (permissions, whisper model, launch at login, shortcuts), AI Cleanup
 (provider/model/API key), Dictionary, Snippets, History (searchable, with
@@ -110,6 +115,7 @@ you fix it. Fields:
 - `cleanupModel` — Anthropic model id for cleanup (default `claude-haiku-4-5`).
 - `anthropicApiKey` — API key for cleanup; the menu-bar **Set API Key…** item writes this field for you. The `ANTHROPIC_API_KEY` environment variable takes precedence; if neither is set, Parla inserts the raw transcript.
 - `whisperModelPath` — absolute path to a ggml whisper model. Defaults to the model downloaded by `scripts/download-model.sh`.
+- `showHudAlways` — keep the dictation pill floating on screen as a small idle capsule at all times, expanding into the full pill during dictation. Default `true`; set `false` for a transient pill shown only while dictating.
 - `historyEnabled` — keep a local log of the last 50 dictations (raw + cleaned + app name) at `~/Library/Application Support/Parla/history.json`, for the menu's Paste Last Dictation / Recent. Default `true`. Secure-field and cancelled dictations are never recorded regardless of this setting.
 - `liveStreamingEnabled` — currently ignored: mid-speech typing is hard-disabled (held-fn keystrokes merge with the modifier; Chromium fields fail the verify probe). Transcription still runs while you speak; the text lands as one paste on release.
 - `restoreClipboard` — after a dictation's cleaned text has verifiably landed in a field, put the clipboard back to whatever it held before you started dictating (instead of leaving the dictated text there as an escape hatch). Default `false`. Only string clipboard contents are snapshotted/restored — a non-text clipboard (e.g. an image) is left untouched.

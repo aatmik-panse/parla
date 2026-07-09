@@ -47,6 +47,13 @@ struct GeneralPage: View {
                         .labelsHidden()
                 }
                 HubDivider()
+                HubRow("Show pill at all times",
+                       detail: "Keep the dictation pill floating on screen when idle") {
+                    Toggle("", isOn: $model.settings.showHudAlways)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+                HubDivider()
                 HubRow("Settings file", detail: "Everything here is stored in settings.json") {
                     Button("Open File") { model.onOpenSettingsFile() }
                         .buttonStyle(HubButtonStyle())
