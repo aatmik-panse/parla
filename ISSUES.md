@@ -1,6 +1,6 @@
 # Parla — Reported Issues Log
 
-User-reported issues, their root causes, and current status. (2026-07-05, updated 2026-07-08)
+User-reported issues, their root causes, and current status. (2026-07-05, updated 2026-07-10)
 
 ## 1. "I am not able to use the app. I wrote the key in .env" — FIXED
 The app never reads `.env`, and GUI apps don't inherit shell env vars.
@@ -61,6 +61,34 @@ Patch: live streaming now starts only when final replacement is AX-verifiable;
 opaque focused text boxes skip streaming and use the final focused paste path.
 Clipboard-only is reserved for no focused element.
 
+## 8. "No option to leave hands-free mode and get the output" — FIXED
+Hands-free (fn+Space) could only be stopped by a second fn+Space, which
+depended on the Space keyDown carrying the fn modifier flag — and nothing in
+the UI documented the exit, so Esc (cancel, output discarded) looked like the
+only way out. Fix: any fn press during hands-free stops and transcribes, via
+the same flagsChanged detection push-to-talk uses; the stop-chord's Space is
+swallowed so it can't leak or restart a session. Tray menu and Hub now state
+the exit ("fn 🌐 stops").
+
+## 2026-07-10 changes
+- Clipboard removed entirely (supersedes the clipboard-fallback mentions in
+  issues 5–7 and the improvements below): Inserter types via CGEvent Unicode
+  keystrokes; every unverifiable delivery goes to local history instead of the
+  pasteboard; password fields are refused at fn-down with a toast. The only
+  remaining pasteboard write is the Hub's explicit Copy button.
+- Hotkeys moved from NSEvent global monitors to a CGEventTap (same
+  Accessibility permission) so chords can be swallowed instead of leaking into
+  the front app; tap creation retries until the permission is granted.
+- New shortcuts: fn+Space hands-free (latch while holding fn, fn stops, pop +
+  "Hands-free…" pill on latch), Esc cancels dictation / dismisses the HUD
+  toast, ⌃⌘V pastes the last transcript, ⌃⌘S opens the Scratchpad. All listed
+  in the Hub shortcuts card and tray menu.
+- Scratchpad: persistent plain-text window (Application
+  Support/Parla/scratchpad.txt, debounced saves) — a safe landing place to
+  dictate into now that the clipboard is gone.
+- Input microphone picker (tray menu + Hub); HUD edge-snapping dock with
+  size presets; app icon everywhere.
+
 ## 2026-07-08 improvements
 - whisper.cpp upgraded to v1.9.1 (vendored xcframework), restoring Metal GPU transcription; `make-app.sh` bundles `whisper.framework` into the app.
 - Instant finalize: fn-up lands the raw transcript immediately through the verified paths, then the LLM-cleaned version swaps in behind it via a diff; new HUD states for each outcome (Transcribing…, ✓ · polishing…, ✓ Pasted, ✓ In clipboard, ✓ cleaned in clipboard, ✓ raw (cleanup failed), ✕ Cancelled).
@@ -74,6 +102,7 @@ Clipboard-only is reserved for no focused element.
 
 ## Next steps
 1. Real-world testing of the instant-finalize + swap flow across more apps (Electron chat apps, terminals, browser text areas) — confirm the raw-then-cleaned handoff feels instant and the swap lands correctly, not just in logs.
-2. Exercise command mode (⇧+fn) in daily use: verify transform quality, the selection-changed clipboard fallback, and that failures never leak the spoken instruction.
+2. Exercise command mode (⇧+fn) in daily use: verify transform quality, the selection-changed history fallback, and that failures never leak the spoken instruction.
 3. Verify the failure-visibility paths for real: a genuinely corrupt settings.json, a revoked permission, and a from-scratch model download.
-4. Live with `liveStreamingEnabled`/`restoreClipboard` toggled both ways to sanity-check the opt-in defaults feel right.
+4. Route no-focus dictations into the Scratchpad instead of history-only — completes the clipboard-removal story.
+5. Configurable shortcuts (recorder UI + persistence); everything is hard-coded today and the Hub says so.
