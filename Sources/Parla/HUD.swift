@@ -22,13 +22,18 @@ final class HUD: @unchecked Sendable {
     private let label = NSTextField(labelWithString: "")
     private let dot = NSView()
     private let waveform = WaveformView()
+    private let appIcon = NSImageView() // shown only inside the drag chip
     private var hideItem: DispatchWorkItem?
     // Currently collapsed to the mini idle capsule (vs. the full active pill).
     private var isIdle = false
-    // ponytail: a user drag pins the pill to one spot across screens/sessions.
-    // Delete the "hudOrigin" pref (or a future Hub control) to restore auto-centering.
-    private var draggedOrigin: NSPoint?
-    private static let originKey = "hudOrigin"
+
+    /// Which screen edge the pill docks to, and where along it (0…1). A drag
+    /// snaps to the nearest edge; both persist across sessions.
+    enum DockEdge: String { case bottom, top, left, right }
+    private var dockEdge: DockEdge = .bottom
+    private var dockOffset: CGFloat = 0.5
+    private static let edgeKey = "hudDockEdge"
+    private static let offsetKey = "hudDockOffset"
 
     private static let activePillFrame = NSRect(x: 12, y: 12, width: 260, height: 44)
 
@@ -39,9 +44,22 @@ final class HUD: @unchecked Sendable {
             collapse(animated: false)
         }
     }
-    private var idlePillFrame: NSRect {
-        NSRect(x: (panel.frame.width - idleBarSize.width) / 2, y: 18,
-               width: idleBarSize.width, height: idleBarSize.height)
+    /// Idle pill frame, centered in the panel. On left/right edges the bar is
+    /// vertical, so width/height swap; the active pill stays horizontal (it holds text).
+    private func idlePillFrame(for edge: DockEdge) -> NSRect {
+        let vertical = edge == .left || edge == .right
+        let w = vertical ? idleBarSize.height : idleBarSize.width
+        let h = vertical ? idleBarSize.width : idleBarSize.height
+        return NSRect(x: (panel.frame.width - w) / 2, y: (panel.frame.height - h) / 2,
+                      width: w, height: h)
+    }
+
+    /// Square app-icon chip shown while dragging the idle bar; scales with the
+    /// size preset (small/medium/large → 40/48/56).
+    private var chipSide: CGFloat { 40 + (idleBarSize.height - 10) * 2 }
+    private func chipFrame() -> NSRect {
+        NSRect(x: (panel.frame.width - chipSide) / 2, y: (panel.frame.height - chipSide) / 2,
+               width: chipSide, height: chipSide)
     }
 
     /// Map the settings preset to a bar size; unknown strings fall back to small.
@@ -115,15 +133,20 @@ final class HUD: @unchecked Sendable {
         label.isEditable = false
         pill.addSubview(label)
 
-        // Restore a pinned drag position, if the user set one, and persist new ones.
-        if let o = UserDefaults.standard.array(forKey: Self.originKey) as? [Double], o.count == 2 {
-            draggedOrigin = NSPoint(x: o[0], y: o[1])
+        appIcon.image = NSApp.applicationIconImage
+        appIcon.imageScaling = .scaleProportionallyUpOrDown
+        appIcon.isHidden = true
+        pill.addSubview(appIcon)
+
+        // Migration: the old free-pin origin is gone — drop its stale pref once.
+        UserDefaults.standard.removeObject(forKey: "hudOrigin")
+        if let raw = UserDefaults.standard.string(forKey: Self.edgeKey),
+           let e = DockEdge(rawValue: raw) { dockEdge = e }
+        if UserDefaults.standard.object(forKey: Self.offsetKey) != nil {
+            dockOffset = CGFloat(UserDefaults.standard.double(forKey: Self.offsetKey))
         }
-        pill.onDragEnd = { [weak self] origin in
-            guard let self else { return }
-            self.draggedOrigin = origin
-            UserDefaults.standard.set([Double(origin.x), Double(origin.y)], forKey: Self.originKey)
-        }
+        pill.onDragStart = { [weak self] in self?.beginDragChip() }
+        pill.onDragEnd = { [weak self] in self?.snapToNearestEdge() }
     }
 
     /// Show the idle capsule (position on the active screen if the panel was off).
@@ -142,18 +165,19 @@ final class HUD: @unchecked Sendable {
         dot.isHidden = true
         waveform.isHidden = true
         label.isHidden = true
-        let target = (screen ?? currentScreen()).map { autoOrigin(idle: true, on: $0) }
+        let target = (screen ?? currentScreen()).map { dockOrigin(idle: true, on: $0) }
+        let frame = idlePillFrame(for: dockEdge)
         if animated {
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.18
-                pill.animator().frame = idlePillFrame
+                pill.animator().frame = frame
                 if let target { panel.animator().setFrame(NSRect(origin: target, size: panel.frame.size), display: true) }
             }
         } else {
-            pill.frame = idlePillFrame
+            pill.frame = frame
             if let target { panel.setFrameOrigin(target) }
         }
-        pill.layer?.cornerRadius = idleBarSize.height / 2
+        pill.layer?.cornerRadius = min(idleBarSize.width, idleBarSize.height) / 2
     }
 
     /// Expand to the full active pill. Animates (pill + panel origin) only when
@@ -162,8 +186,9 @@ final class HUD: @unchecked Sendable {
     private func expand(to screen: NSScreen? = nil) {
         let wasIdle = isIdle
         isIdle = false
+        appIcon.isHidden = true // in case fn lands mid-drag
         label.isHidden = false
-        let target = (screen ?? currentScreen()).map { autoOrigin(idle: false, on: $0) }
+        let target = (screen ?? currentScreen()).map { dockOrigin(idle: false, on: $0) }
         if wasIdle {
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.18
@@ -262,14 +287,75 @@ final class HUD: @unchecked Sendable {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: item)
     }
 
-    /// Auto-position for a mode on `screen`: active sits 80pt above the screen
-    /// bottom; idle hugs just above the Dock (visibleFrame). A pinned drag
-    /// origin overrides both, so both modes share the dragged spot verbatim.
-    private func autoOrigin(idle: Bool, on screen: NSScreen) -> NSPoint {
-        if let draggedOrigin { return draggedOrigin }
-        let x = screen.frame.midX - panel.frame.width / 2
-        let y = idle ? screen.visibleFrame.minY + 2 : screen.frame.minY + 80
-        return NSPoint(x: x, y: y)
+    /// Panel origin that docks the pill to `dockEdge` at `dockOffset` along it,
+    /// its outer edge a margin (10 idle / 16 active) from the screen edge. Anchors
+    /// top/bottom off visibleFrame (respects Dock + menu bar) and the along-edge
+    /// span off visibleFrame too; left/right x off screen.frame (true screen edge).
+    /// The pill center is clamped so the pill stays fully within the span, then the
+    /// panel origin is backed out (the pill sits at `pf.origin` inside the panel —
+    /// a partly off-screen panel is fine, it's transparent).
+    private func dockOrigin(idle: Bool, on screen: NSScreen) -> NSPoint {
+        let vis = screen.visibleFrame, f = screen.frame
+        let margin: CGFloat = idle ? 10 : 16
+        let pf = idle ? idlePillFrame(for: dockEdge) : HUD.activePillFrame
+        let px: CGFloat, py: CGFloat
+        switch dockEdge {
+        case .bottom, .top:
+            let cx = clamp(vis.minX + dockOffset * vis.width, vis.minX + pf.width / 2, vis.maxX - pf.width / 2)
+            px = cx - pf.width / 2
+            py = dockEdge == .bottom ? vis.minY + margin : vis.maxY - margin - pf.height
+        case .left, .right:
+            let cy = clamp(vis.minY + dockOffset * vis.height, vis.minY + pf.height / 2, vis.maxY - pf.height / 2)
+            py = cy - pf.height / 2
+            px = dockEdge == .left ? f.minX + margin : f.maxX - margin - pf.width
+        }
+        return NSPoint(x: px - pf.origin.x, y: py - pf.origin.y)
+    }
+
+    /// Drag pickup: the idle bar morphs into a small app-icon chip that travels
+    /// with the cursor. Mid-dictation drags keep the full pill (it shows state).
+    private func beginDragChip() {
+        guard isIdle else { return }
+        let chip = chipFrame()
+        appIcon.frame = chip.insetBy(dx: 6, dy: 6).offsetBy(dx: -chip.minX, dy: -chip.minY)
+        appIcon.isHidden = false
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.18
+            pill.animator().frame = chip
+        }
+        pill.layer?.cornerRadius = chipSide * 0.3
+    }
+
+    /// Drop-target of a drag: pick the nearest edge, remember it + the offset,
+    /// then animate to the snapped spot (re-orienting the idle bar if the edge
+    /// flipped horizontal↔vertical; a mid-dictation drag just moves the panel).
+    private func snapToNearestEdge() {
+        let c = NSPoint(x: panel.frame.midX, y: panel.frame.midY)
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(c) }) ?? Self.activeScreen() else { return }
+        let f = screen.frame, vis = screen.visibleFrame
+        let pf = isIdle ? idlePillFrame(for: dockEdge) : HUD.activePillFrame
+        let pc = NSPoint(x: panel.frame.minX + pf.midX, y: panel.frame.minY + pf.midY)
+        // left/right off the true screen edge; top/bottom off visibleFrame.
+        let dists: [(DockEdge, CGFloat)] = [
+            (.left, pc.x - f.minX), (.right, f.maxX - pc.x),
+            (.bottom, pc.y - vis.minY), (.top, vis.maxY - pc.y),
+        ]
+        dockEdge = dists.min { $0.1 < $1.1 }!.0
+        switch dockEdge {
+        case .bottom, .top: dockOffset = clamp((pc.x - vis.minX) / vis.width, 0.05, 0.95)
+        case .left, .right: dockOffset = clamp((pc.y - vis.minY) / vis.height, 0.05, 0.95)
+        }
+        UserDefaults.standard.set(dockEdge.rawValue, forKey: Self.edgeKey)
+        UserDefaults.standard.set(Double(dockOffset), forKey: Self.offsetKey)
+        appIcon.isHidden = true // drop the drag chip; the bar re-forms below
+        let target = dockOrigin(idle: isIdle, on: screen)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.45
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            if isIdle { pill.animator().frame = idlePillFrame(for: dockEdge) }
+            panel.animator().setFrame(NSRect(origin: target, size: panel.frame.size), display: true)
+        }
+        if isIdle { pill.layer?.cornerRadius = min(idleBarSize.width, idleBarSize.height) / 2 }
     }
 
     /// Screen the panel currently occupies (by its center), else the active
@@ -299,8 +385,10 @@ final class HUD: @unchecked Sendable {
 /// confuse a programmatic panel move with a user drag. Subviews (label, dot,
 /// waveform) don't handle mouseDown, so it bubbles up to here.
 final class DraggablePill: NSView {
-    /// Called after a real drag (not a plain click) with the window's final origin.
-    var onDragEnd: ((NSPoint) -> Void)?
+    /// Called once when a real drag begins (first mouseDragged of a press).
+    var onDragStart: (() -> Void)?
+    /// Called after a real drag (not a plain click); the window is at its dropped origin.
+    var onDragEnd: (() -> Void)?
     private var dragOffset: NSPoint?  // mouse → window-origin gap at mouseDown
     private var didDrag = false       // plain clicks must not pin the pill
 
@@ -313,17 +401,19 @@ final class DraggablePill: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         guard let win = window, let off = dragOffset else { return }
-        didDrag = true
+        if !didDrag { didDrag = true; onDragStart?() }
         let m = NSEvent.mouseLocation
         win.setFrameOrigin(NSPoint(x: m.x - off.x, y: m.y - off.y))
     }
 
     override func mouseUp(with event: NSEvent) {
         defer { dragOffset = nil; didDrag = false }
-        guard didDrag, let win = window else { return }
-        onDragEnd?(win.frame.origin)
+        guard didDrag, window != nil else { return }
+        onDragEnd?()
     }
 }
+
+private func clamp(_ v: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat { min(hi, max(lo, v)) }
 
 /// Draws the last ~30 pushed levels as centered vertical bars. No timers —
 /// motion comes only from real pushed values.
