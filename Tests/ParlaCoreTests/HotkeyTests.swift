@@ -164,6 +164,13 @@ final class HotkeyTests: XCTestCase {
         XCTAssertEqual(out, [.pasteLast])
     }
 
+    func testCtrlCmdSOpensScratchpadAndIsSwallowed() {
+        var out: [HotkeyMonitor.Edge] = []
+        let m = monitor(&out)
+        XCTAssertTrue(m.keyDown(keyCode: 1, cmd: true, ctrl: true, at: 0))
+        XCTAssertEqual(out, [.openScratchpad])
+    }
+
     func testPlainCmdVIgnored() {
         var out: [HotkeyMonitor.Edge] = []
         let m = monitor(&out)

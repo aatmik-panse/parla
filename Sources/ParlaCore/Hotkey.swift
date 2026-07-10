@@ -23,6 +23,8 @@ public final class HotkeyMonitor {
         case handsFree
         /// ⌃⌘V while idle: paste the last transcript.
         case pasteLast
+        /// ⌃⌘S while idle: open the scratchpad.
+        case openScratchpad
         /// Esc while idle: dismiss the HUD toast.
         case dismiss
     }
@@ -90,6 +92,10 @@ public final class HotkeyMonitor {
         if session == .handsFree { return false } // typing while hands-free is fine
         if keyCode == 9, cmd, ctrl { // ⌃⌘V: paste last transcript
             onEdge?(.pasteLast)
+            return true
+        }
+        if keyCode == 1, cmd, ctrl { // ⌃⌘S: open the scratchpad
+            onEdge?(.openScratchpad)
             return true
         }
         if keyCode == 53 { onEdge?(.dismiss) } // Esc while idle: dismiss HUD toast, pass through

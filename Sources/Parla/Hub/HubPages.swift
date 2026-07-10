@@ -97,6 +97,10 @@ struct GeneralPage: View {
                     ShortcutPill(text: "⌃ ⌘ V")
                 }
                 HubDivider()
+                HubRow("Open Scratchpad", detail: "A safe place to dictate and edit") {
+                    ShortcutPill(text: "⌃ ⌘ S")
+                }
+                HubDivider()
                 HubRow("Cancel", detail: "Dismiss dictation and notifications") {
                     ShortcutPill(text: "esc")
                 }

@@ -69,8 +69,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return m
     }()
     lazy var hubController = HubWindowController(model: hubModel)
+    let scratchpad = ScratchpadController()
 
     @objc func openHub() { hubController.show() }
+    @objc func openScratchpad() { scratchpad.show() }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        scratchpad.save() // flush a pending debounced edit
+    }
 
     /// Where the instant raw finalize landed — decides how the cleaned swap applies.
     /// .history = nothing typed anywhere; the transcript lives only in history.
@@ -237,6 +243,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .pasteLast:
                 guard let text = self.history.entries.first?.best else { return }
                 self.pasteWhenModifiersClear(text)
+            case .openScratchpad:
+                self.scratchpad.show()
             case .dismiss:
                 self.hud.dismiss()
             }
@@ -817,6 +825,11 @@ extension AppDelegate: NSMenuDelegate {
         let openHubItem = NSMenuItem(title: "Open Parla…", action: #selector(openHub), keyEquivalent: "")
         openHubItem.target = self
         menu.addItem(openHubItem)
+        let scratchItem = NSMenuItem(title: "Open Scratchpad", action: #selector(openScratchpad), keyEquivalent: "s")
+        // Display only — the global ⌃⌘S lives in HotkeyMonitor (swallowed there).
+        scratchItem.keyEquivalentModifierMask = [.control, .command]
+        scratchItem.target = self
+        menu.addItem(scratchItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Hold fn 🌐 to dictate", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "fn 🌐 + Space for hands-free · fn 🌐 stops", action: nil, keyEquivalent: ""))
