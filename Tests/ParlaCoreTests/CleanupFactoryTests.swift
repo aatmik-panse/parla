@@ -78,8 +78,9 @@ final class CleanupFactoryTests: XCTestCase {
         s.cleanup.model = "llama3"
         XCTAssertEqual(cleanupWarmURL(settings: s, env: [:])?.absoluteString,
                        "http://localhost:11434/v1")
-        s.cleanup.model = nil
-        XCTAssertNil(cleanupWarmURL(settings: s, env: [:]))
+        s.cleanup.model = nil // model optional — warm URL still valid
+        XCTAssertEqual(cleanupWarmURL(settings: s, env: [:])?.absoluteString,
+                       "http://localhost:11434/v1")
     }
 
     func testUnknownProviderTreatedAsAnthropic() async throws {
@@ -130,12 +131,37 @@ final class CleanupFactoryTests: XCTestCase {
         }
     }
 
-    func testOpenAICompatMissingModelThrows() {
+    // "http://local host:1234" makes URL(string:) return nil — this used to
+    // crash the client's force unwrap instead of hitting the raw-text fallback.
+    func testOpenAICompatInvalidBaseURLThrows() {
         var s = Settings()
         s.cleanup.provider = "openai-compatible"
-        s.cleanup.baseURL = "http://x/v1"
-        XCTAssertThrowsError(try makeCleanupClient(settings: s, env: [:])) { error in
-            XCTAssertTrue("\(error)".lowercased().contains("model"))
+        s.cleanup.model = "m"
+        for bad in ["http://local host:1234", "ollama", "ftp://x/v1"] {
+            s.cleanup.baseURL = bad
+            XCTAssertThrowsError(try makeCleanupClient(settings: s, env: [:]), bad) { error in
+                XCTAssertTrue("\(error)".lowercased().contains("baseurl"))
+            }
+            XCTAssertNil(cleanupWarmURL(settings: s, env: [:]), bad)
         }
+    }
+
+    // Model is optional for openai-compatible: empty ⇒ GET {base}/models and
+    // use the first entry. The mock body serves both endpoints at once.
+    func testOpenAICompatMissingModelUsesServersFirstModel() async throws {
+        var s = Settings()
+        s.cleanup.provider = "openai-compatible"
+        s.cleanup.baseURL = "http://localhost:11434/v1"
+        let http = MockHTTP()
+        http.body = Data(
+            #"{"data":[{"id":"llama3"},{"id":"other"}],"choices":[{"message":{"content":"ok"}}]}"#.utf8)
+        let client = try makeCleanupClient(settings: s, env: [:], http: http)
+        _ = try await client.clean(transcript: "x", context: ctx)
+
+        // Last request is the chat call — it must carry the server's first model.
+        let req = http.lastRequest!
+        XCTAssertEqual(req.url?.absoluteString, "http://localhost:11434/v1/chat/completions")
+        let json = try JSONSerialization.jsonObject(with: req.httpBody!) as! [String: Any]
+        XCTAssertEqual(json["model"] as? String, "llama3")
     }
 }

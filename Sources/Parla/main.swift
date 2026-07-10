@@ -84,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setStatus("🎤")
+        installMainMenu()
         buildMenu()
         requestPermissions()
         loadModel()
@@ -745,6 +746,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+    }
+
+    // LSUIElement apps get no main menu by default, and macOS dispatches
+    // ⌘C/⌘V/⌘X/⌘A through the main menu's Edit items — without this, paste
+    // doesn't work in any hub/scratchpad text field.
+    func installMainMenu() {
+        let main = NSMenu()
+
+        let appItem = NSMenuItem()
+        appItem.submenu = NSMenu()
+        appItem.submenu?.addItem(NSMenuItem(
+            title: "Quit Parla", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+        edit.addItem(NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
+        edit.addItem(.separator())
+        edit.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        edit.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        edit.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        edit.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editItem.submenu = edit
+        main.addItem(editItem)
+
+        NSApp.mainMenu = main
+
+        // Belt-and-suspenders: menu key equivalents can still miss in
+        // LSUIElement apps, so handle the standard edit shortcuts directly,
+        // sending to the first responder. Falls through when unhandled.
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                  let key = event.charactersIgnoringModifiers?.lowercased() else { return event }
+            let action: Selector?
+            switch key {
+            case "v": action = #selector(NSText.paste(_:))
+            case "c": action = #selector(NSText.copy(_:))
+            case "x": action = #selector(NSText.cut(_:))
+            case "a": action = #selector(NSText.selectAll(_:))
+            case "z": action = Selector(("undo:"))
+            default: action = nil
+            }
+            if let action, NSApp.sendAction(action, to: nil, from: nil) { return nil }
+            return event
+        }
     }
 
     @objc func openSettings() {

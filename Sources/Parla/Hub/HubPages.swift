@@ -140,12 +140,56 @@ struct CleanupPage: View {
 
     private var isAnthropic: Bool { model.settings.cleanup.provider != "openai-compatible" }
 
+    // Switching to Anthropic drops the openai-compatible overrides: CleanupFactory
+    // resolves cleanup.model/apiKey/apiKeyEnvVar ahead of the fields this page
+    // shows in Anthropic mode, so leaving them behind silently sends a stale
+    // model id and key from the other provider.
+    private var provider: Binding<String> {
+        Binding(get: { model.settings.cleanup.provider },
+                set: { p in
+                    model.settings.cleanup.provider = p
+                    if p != "openai-compatible" {
+                        model.settings.cleanup.model = nil
+                        model.settings.cleanup.apiKey = nil
+                        model.settings.cleanup.apiKeyEnvVar = nil
+                    }
+                })
+    }
+
+    // Shows the model actually used (cleanup.model outranks cleanupModel);
+    // editing writes cleanupModel and clears the override so what you see is
+    // always what gets sent.
+    private var anthropicModel: Binding<String> {
+        Binding(get: { model.settings.cleanup.model ?? model.settings.cleanupModel },
+                set: { model.settings.cleanupModel = $0; model.settings.cleanup.model = nil })
+    }
+
+    // Same validation the dictation path runs (makeCleanupClient), so this
+    // warning can never disagree with what actually happens. nil = cleanup
+    // will run. Keyless openai-compatible is valid (local servers) — the
+    // factory allows it, so no banner there.
+    private var configIssue: String? {
+        do {
+            _ = try makeCleanupClient(settings: model.settings,
+                                      env: ProcessInfo.processInfo.environment)
+            return nil
+        } catch let error as CleanupError {
+            if error.description.contains("baseURL") { return "no base URL is set" }
+            return "no API key is set"
+        } catch {
+            return "\(error)"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
+            if let issue = configIssue {
+                HubBanner(text: "Cleanup won't run — \(issue). Dictations will insert the raw transcript unpolished.")
+            }
             HubSection("Provider",
-                       footer: "Cleanup polishes the raw transcript. Misconfiguration falls back to inserting the raw text.") {
+                       footer: "Cleanup polishes the raw transcript. If it fails, the raw text is inserted instead.") {
                 HubRow("Service") {
-                    Picker("", selection: $model.settings.cleanup.provider) {
+                    Picker("", selection: provider) {
                         Text("Anthropic").tag("anthropic")
                         Text("OpenAI-compatible").tag("openai-compatible")
                     }
@@ -157,43 +201,39 @@ struct CleanupPage: View {
 
             if isAnthropic {
                 HubSection("Anthropic",
-                           footer: "The ANTHROPIC_API_KEY environment variable takes precedence over the key stored here.") {
+                           footer: "The ANTHROPIC_API_KEY environment variable takes precedence over the key stored here (terminal launches only).") {
                     HubRow("Model") {
-                        TextField("claude-haiku-4-5", text: $model.settings.cleanupModel)
+                        TextField("claude-opus-4-6", text: anthropicModel)
                             .hubField().frame(width: 260)
                     }
                     HubDivider()
-                    HubRow("API key", detail: "Stored in settings.json") {
-                        SecureField(model.settings.anthropicApiKey == nil ? "sk-ant-…" : "••••••••",
+                    HubRow("API key", detail: "Stored in settings.json — hover to reveal") {
+                        SecretField(placeholder: "sk-ant-…",
                                     text: optBinding($model.settings.anthropicApiKey))
-                            .hubField().frame(width: 260)
+                            .frame(width: 260)
                     }
                 }
             } else {
                 HubSection("Endpoint",
-                           footer: "Works with Groq, Gemini, OpenAI, or local Ollama/LM Studio. Leave both key fields empty for keyless local servers.") {
+                           footer: "Any OpenAI-compatible endpoint, hosted or local. Leave the key empty for keyless local servers.") {
                     HubRow("Base URL", detail: "Parla POSTs to {base}/chat/completions") {
-                        TextField("https://api.groq.com/openai/v1",
+                        TextField("https://api.example.com/v1",
                                   text: optBinding($model.settings.cleanup.baseURL))
                             .hubField().frame(width: 260)
                     }
                     HubDivider()
-                    HubRow("Model") {
-                        TextField("llama-3.3-70b-versatile",
+                    HubRow("Model", detail: "Optional — empty uses the server's first model") {
+                        TextField("server default",
                                   text: optBinding($model.settings.cleanup.model))
                             .hubField().frame(width: 260)
                     }
                     HubDivider()
-                    HubRow("API key env var", detail: "Takes precedence over the inline key") {
-                        TextField("GROQ_API_KEY",
-                                  text: optBinding($model.settings.cleanup.apiKeyEnvVar))
-                            .hubField().frame(width: 260)
-                    }
-                    HubDivider()
-                    HubRow("API key", detail: "Inline fallback, stored in settings.json") {
-                        SecureField(model.settings.cleanup.apiKey == nil ? "key…" : "••••••••",
+                    // cleanup.apiKeyEnvVar still works via settings.json — just
+                    // not advertised here; it only functions on terminal launches.
+                    HubRow("API key", detail: "Stored in settings.json — hover to reveal") {
+                        SecretField(placeholder: "key…",
                                     text: optBinding($model.settings.cleanup.apiKey))
-                            .hubField().frame(width: 260)
+                            .frame(width: 260)
                     }
                 }
             }
@@ -450,7 +490,7 @@ struct PrivacyPage: View {
                        detail: "Dictation is refused in secure fields — nothing is typed, stored, or sent to the cleanup model") { EmptyView() }
                 HubDivider()
                 HubRow("Cleanup sends text only",
-                       detail: "Only the transcript text is sent to your configured cleanup provider") { EmptyView() }
+                       detail: "The transcript, your dictionary, snippets, and the frontmost app's name — never audio") { EmptyView() }
             }
         }
     }

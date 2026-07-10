@@ -12,15 +12,21 @@ private func resolvedCleanupKey(
     return nil
 }
 
+/// Base URL usable for cleanup: parses, http(s) scheme, has a host. Anything
+/// else is misconfiguration — callers must refuse it up front, never hand it
+/// to a client that would build a request URL from it.
+private func validBaseURL(_ raw: String?) -> URL? {
+    guard let raw, !raw.isEmpty, let url = URL(string: raw),
+          ["http", "https"].contains(url.scheme?.lowercased()), url.host != nil else { return nil }
+    return url
+}
+
 /// Provider URL to pre-warm, or nil when cleanup is not configured.
 public func cleanupWarmURL(settings: Settings, env: [String: String]) -> URL? {
     let c = settings.cleanup
     switch c.provider {
     case "openai-compatible":
-        guard let baseURL = c.baseURL, !baseURL.isEmpty,
-              let model = c.model, !model.isEmpty,
-              let url = URL(string: baseURL),
-              ["http", "https"].contains(url.scheme?.lowercased()), url.host != nil else { return nil }
+        guard let url = validBaseURL(c.baseURL) else { return nil }
         return url
     default:
         guard resolvedCleanupKey(settings: settings, env: env, anthropicLegacy: true) != nil else {
@@ -43,9 +49,11 @@ public func makeCleanupClient(
         guard let baseURL = c.baseURL, !baseURL.isEmpty else {
             throw CleanupError(description: "cleanup.baseURL required for openai-compatible provider")
         }
-        guard let model = c.model, !model.isEmpty else {
-            throw CleanupError(description: "cleanup.model required for openai-compatible provider")
+        guard validBaseURL(baseURL) != nil else {
+            throw CleanupError(description: "cleanup.baseURL is not a valid http(s) URL: \(baseURL)")
         }
+        // model optional: nil ⇒ the client asks the server for its first model
+        let model = (c.model?.isEmpty ?? true) ? nil : c.model
         return OpenAICompatClient(
             baseURL: baseURL,
             apiKey: resolvedCleanupKey(settings: settings, env: env, anthropicLegacy: false),

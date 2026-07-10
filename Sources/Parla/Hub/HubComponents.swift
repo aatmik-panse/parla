@@ -175,3 +175,34 @@ func optBinding(_ source: Binding<String?>) -> Binding<String> {
     Binding(get: { source.wrappedValue ?? "" },
             set: { source.wrappedValue = $0.isEmpty ? nil : $0 })
 }
+
+/// Secret field: masked at rest, revealed while hovered or focused, with a ✕
+/// button to remove the stored key. Stays revealed while focused so the
+/// hover-out view swap can't steal the cursor mid-edit.
+struct SecretField: View {
+    let placeholder: String
+    @Binding var text: String
+    @State private var hovering = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if hovering || focused {
+                TextField(placeholder, text: $text)
+                    .focused($focused)
+            } else {
+                SecureField(placeholder, text: $text)
+            }
+            if !text.isEmpty {
+                Button { text = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(Theme.muted)
+                }
+                .buttonStyle(.plain)
+                .help("Remove key")
+            }
+        }
+        .hubField()
+        .onHover { hovering = $0 }
+    }
+}
