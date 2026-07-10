@@ -116,8 +116,27 @@ final class HotkeyTests: XCTestCase {
         _ = m.keyDown(keyCode: 49, fnActive: true, at: 0.1)                // latch hands-free
         m.handle(keyCode: 63, fnActive: false, at: 0.3)
         XCTAssertFalse(m.keyDown(keyCode: 0, at: 1))                       // plain typing passes through
-        XCTAssertFalse(m.keyDown(keyCode: 49, at: 2))                      // plain space too (no fn)
         XCTAssertEqual(out, [.down(command: false), .handsFree])           // still recording
+    }
+
+    func testSpaceStopsHandsFree() {
+        var out: [HotkeyMonitor.Edge] = []
+        let m = monitor(&out)
+        m.handle(keyCode: 63, fnActive: true, at: 0)
+        _ = m.keyDown(keyCode: 49, fnActive: true, at: 0.1)                // latch hands-free
+        m.handle(keyCode: 63, fnActive: false, at: 0.3)
+        XCTAssertTrue(m.keyDown(keyCode: 49, at: 2))                       // plain Space: stop, swallowed
+        XCTAssertEqual(out, [.down(command: false), .handsFree, .up(short: false)])
+    }
+
+    func testReturnStopsHandsFree() {
+        var out: [HotkeyMonitor.Edge] = []
+        let m = monitor(&out)
+        m.handle(keyCode: 63, fnActive: true, at: 0)
+        _ = m.keyDown(keyCode: 49, fnActive: true, at: 0.1)                // latch hands-free
+        m.handle(keyCode: 63, fnActive: false, at: 0.3)
+        XCTAssertTrue(m.keyDown(keyCode: 36, at: 2))                       // Return: stop, swallowed
+        XCTAssertEqual(out, [.down(command: false), .handsFree, .up(short: false)])
     }
 
     func testEscCancelsHandsFree() {

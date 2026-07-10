@@ -878,9 +878,6 @@ extension AppDelegate: NSMenuDelegate {
         scratchItem.target = self
         menu.addItem(scratchItem)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Hold fn 🌐 to dictate", action: nil, keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "fn 🌐 + Space for hands-free · fn 🌐 stops", action: nil, keyEquivalent: ""))
-        menu.addItem(.separator())
 
         if transcriber == nil {
             if downloadTask != nil {

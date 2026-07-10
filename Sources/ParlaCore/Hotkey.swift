@@ -1,7 +1,7 @@
 import AppKit
 
 /// Global dictation hotkeys. fn/Globe (keyCode 63) held is push-to-talk;
-/// fn+Space latches hands-free (press again to stop); Esc cancels a dictation
+/// fn+Space latches hands-free (fn, Space, or Return stops it); Esc cancels a dictation
 /// or dismisses the HUD toast; ⌃⌘V pastes the last transcript.
 ///
 /// A CGEventTap (same Accessibility permission) replaced the old NSEvent
@@ -89,7 +89,12 @@ public final class HotkeyMonitor {
             onEdge?(.cancel)
             return false
         }
-        if session == .handsFree { return false } // typing while hands-free is fine
+        if session == .handsFree, keyCode == 49 || keyCode == 36 { // Space/Return stop hands-free
+            session = .idle
+            onEdge?(.up(short: time - downAt < shortTapThreshold))
+            return true // swallow — a space/newline must not land in the field before the transcript
+        }
+        if session == .handsFree { return false } // other typing while hands-free is fine
         if keyCode == 9, cmd, ctrl { // ⌃⌘V: paste last transcript
             onEdge?(.pasteLast)
             return true
