@@ -39,10 +39,6 @@ public struct Settings: Codable, Equatable {
     // Mid-stream live retyping while fn is held. Off ⇒ instant raw finalize on
     // fn-up still happens; only the word-by-word revision stream is skipped.
     public var liveStreamingEnabled: Bool = true
-    // Opt-in: put the clipboard back to what it held before dictating, once the
-    // dictation is verified to have landed safely in a field (see Inserter.restore
-    // call sites in AppDelegate.finish for the exact conditions).
-    public var restoreClipboard: Bool = false
     // Core Audio UID of the input device to record from. nil ⇒ system default.
     // A UID that no longer resolves (device unplugged) also falls back to default.
     public var inputDeviceUID: String? = nil
@@ -63,7 +59,6 @@ public struct Settings: Codable, Equatable {
         showHudAlways = try c.decodeIfPresent(Bool.self, forKey: .showHudAlways) ?? showHudAlways
         hudIdleSize = try c.decodeIfPresent(String.self, forKey: .hudIdleSize) ?? hudIdleSize
         liveStreamingEnabled = try c.decodeIfPresent(Bool.self, forKey: .liveStreamingEnabled) ?? liveStreamingEnabled
-        restoreClipboard = try c.decodeIfPresent(Bool.self, forKey: .restoreClipboard) ?? restoreClipboard
         inputDeviceUID = try c.decodeIfPresent(String.self, forKey: .inputDeviceUID) ?? inputDeviceUID
     }
 }

@@ -94,6 +94,8 @@ final class HubModel: ObservableObject {
         historyEntries = []
     }
 
+    /// The ONLY pasteboard write in the app — an explicit, user-initiated Copy.
+    /// Parla itself never touches the clipboard anywhere else.
     func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)

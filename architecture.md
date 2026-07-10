@@ -68,9 +68,9 @@ dictated. Building only A caps you at a single-user tool.
 │           + active app name (from AX API)           │
 │      │ polished text                                │
 │      ▼                                              │
-│  Insertion: clipboard + synthetic ⌘V                │
-│    fallback: CGEvent Unicode keystrokes             │
-│    always: keep result in clipboard on failure      │
+│  Insertion: CGEvent Unicode keystrokes              │
+│    no clipboard — transcripts stay in-app;          │
+│    failures recoverable from local history          │
 └─────────────────────────────────────────────────────┘
 
 Local state: JSON/SQLite — dictionary, snippets, settings, history.
@@ -97,7 +97,7 @@ What Phase 1 deliberately skips:
 ### Phase 2 — the product features (still no backend)
 
 - **Personal dictionary UI** + auto-learn from user's post-insertion edits
-  (diff clipboard/AX field content shortly after insert — this is the
+  (diff AX field content shortly after insert — this is the
   feedback loop, all local).
 - **Snippets** — spoken cue → expansion, resolved in the LLM prompt.
 - **Command Mode / Transforms** — read selected text via AX API, apply spoken
@@ -152,8 +152,8 @@ script, not a pipeline:
 ## Hard problems (ranked by when they bite)
 
 1. **Insertion reliability across apps** — Phase 1, day one. Secure input
-   fields, Electron apps, terminals all behave differently. Always leave the
-   text in the clipboard as the escape hatch.
+   fields, Electron apps, terminals all behave differently. Every transcript
+   is kept in local history as the escape hatch (no clipboard involvement).
 2. **Self-correction handling** ("at 5… actually 6") — prompt engineering +
    eval set; the LLM does this well if explicitly instructed.
 3. **Latency feel** — Phase 1–2. Push-to-talk + turbo model is fine; streaming

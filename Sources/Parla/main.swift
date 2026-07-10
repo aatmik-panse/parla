@@ -35,7 +35,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Cleanup context is latched at fn-down and read at fn-up like liveTyping/focus.
     var bundleID: String?
     var appName: String?
-    var clipboardSnapshot: String?
     var settings = Settings()
     // Command mode (⇧+fn): transform the selection captured at fn-down instead of
     // dictating. Latched at fn-down, read at fn-up like liveTyping/focus.
@@ -74,7 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openHub() { hubController.show() }
 
     /// Where the instant raw finalize landed — decides how the cleaned swap applies.
-    enum Landing: Sendable { case field, clipboard }
+    /// .history = nothing typed anywhere; the transcript lives only in history.
+    enum Landing: Sendable { case field, history }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setStatus("🎤")
@@ -120,7 +120,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 self.commandMode = false
-                self.clipboardSnapshot = NSPasteboard.general.string(forType: .string)
                 let frontApp = NSWorkspace.shared.frontmostApplication
                 self.bundleID = frontApp?.bundleIdentifier
                 self.appName = frontApp?.localizedName
@@ -146,17 +145,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSLog("Parla mic start failed: \(error)")
                     return
                 }
-                // Focused field gets the final paste at fn-up; no focus is
-                // clipboard-only (see finish).
+                // Focused field gets the final insert at fn-up; no focus is
+                // history-only (see finish).
                 self.focus = Inserter.focusTarget()
+                // Password field: with no clipboard hand-off there is nothing
+                // safe to do with the transcript (never type into a secure
+                // field, never store a plausible password) — refuse up front.
+                // Inline cancel, not cancelDictation(): its queued hud.hide()
+                // would immediately wipe the error toast. Nothing streamed yet.
+                guard self.focus != .secure else {
+                    self.isRecording = false
+                    _ = self.recorder.stop() // discard the captured audio
+                    self.hud.show(.error("Not supported in password fields"))
+                    self.showIdle()
+                    return
+                }
                 // Live in-field typing is hard-disabled: keystrokes posted while
                 // the user physically holds fn merge with the modifier (fn+A
-                // opens the Dock, ⇧← becomes select-to-Home), and Chromium never
-                // answers the ⌘C verify probe — revisions stall on the first
-                // wrong hypothesis and the finalize demotes to clipboard-only.
-                // Shadow streaming below keeps the speed win; the transcript
-                // lands as ONE paste at fn-up, after the modifier is released.
-                // Re-enable only with a verified fix for the fn-merge + probe.
+                // opens the Dock, ⇧← becomes select-to-Home) — revisions stall
+                // on the first wrong hypothesis and the finalize demotes to
+                // history-only. Shadow streaming below keeps the speed win; the
+                // transcript lands as ONE insert at fn-up, after the modifier is
+                // released. Re-enable only with a verified fix for the fn-merge.
                 self.liveTyping = false
                 // Shadow streaming: run the pass loop on EVERY dictation, not just
                 // live-typing ones, so finish() only ever pays for the unconfirmed
@@ -203,7 +213,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let gen = self.generation
                 let bundleID = self.bundleID
                 let appName = self.appName
-                let clipboardSnapshot = self.clipboardSnapshot
                 let settings = self.settings
                 self.setStatus("…")
                 self.hud.show(.transcribing)
@@ -213,7 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.processTask = Task { [prev = self.processTask] in
                     await prev?.value
                     await self.finish(samples: samples, live: live, focus: focus, gen: gen, bundleID: bundleID,
-                                      appName: appName, clipboardSnapshot: clipboardSnapshot, settings: settings)
+                                      appName: appName, settings: settings)
                 }
             case .cancel:
                 // Esc, or a real key pressed while fn was held (fn+arrow): abort.
@@ -235,9 +244,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkey.start()
     }
 
-    /// ⌃⌘V is still physically held when the pasteLast edge fires; a synthetic
-    /// ⌘V posted now would merge with those modifiers and stop being a paste.
-    /// Wait for release (max ~1s), then insert; give up to the clipboard.
+    /// ⌃⌘V is still physically held when the pasteLast edge fires; typing while
+    /// real modifiers are down risks the app reading them alongside our events.
+    /// Wait for release (max ~1s), then insert; give up with a toast — the text
+    /// stays in history for another try.
     func pasteWhenModifiersClear(_ text: String, tries: Int = 20) {
         if NSEvent.modifierFlags.intersection([.command, .control, .option, .shift, .function]).isEmpty {
             Inserter.insert(text)
@@ -246,7 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.pasteWhenModifiersClear(text, tries: tries - 1)
             }
         } else {
-            Inserter.copy(text)
+            hud.show(.error("Release keys, then retry"))
         }
     }
 
@@ -266,12 +276,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Undo live-typed text only if still provably ours (same
                 // invariant as finish's empty-transcript path — never blind-delete).
                 let typedCount = self.typed.count
-                if typedCount > 0 {
-                    if Inserter.canEraseTyped(self.typed) {
-                        Inserter.typeBackspaces(typedCount)
-                    } else if Inserter.selectBackAndVerify(self.typed) {
-                        Inserter.typeBackspaces(1) // delete the verified selection
-                    }
+                if typedCount > 0, Inserter.canEraseTyped(self.typed) {
+                    Inserter.typeBackspaces(typedCount)
                 }
                 self.typed = ""
                 self.window = nil    // discard any confirmed-prefix the stream handed off
@@ -282,7 +288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget, gen: Int,
-                bundleID: String?, appName: String?, clipboardSnapshot: String?, settings: Settings) async {
+                bundleID: String?, appName: String?, settings: Settings) async {
         let hud = self.hud // bind so main-queue hops don't capture non-Sendable self
         defer {
             DispatchQueue.main.async {
@@ -341,12 +347,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Empty transcript: undo anything we streamed — only if verified ours.
                 let typedCount = self.typed.count
                 NSLog("Parla finish: empty transcript, typed=%d", typedCount)
-                if typedCount > 0 {
-                    if Inserter.canEraseTyped(self.typed) {
-                        Inserter.typeBackspaces(typedCount)
-                    } else if Inserter.selectBackAndVerify(self.typed) {
-                        Inserter.typeBackspaces(1) // delete the verified selection
-                    }
+                if typedCount > 0, Inserter.canEraseTyped(self.typed) {
+                    Inserter.typeBackspaces(typedCount)
                 }
                 self.typed = ""
                 hud.hide()
@@ -367,8 +369,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Instant finalize: land the raw transcript NOW; the LLM polish swaps in
-        // behind it without blocking the user.
-        let landing: Landing = await MainActor.run {
+        // behind it without blocking the user. nil = dropped (secure field).
+        let landing: Landing? = await MainActor.run {
             let typedCount = self.typed.count // graphemes streamed live so far
             defer { self.typed = "" }
             // Never log the transcript for a secure field — it's plausibly a
@@ -377,69 +379,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   focus == .secure ? "<secure>" : insertText, live ? 1 : 0, focus == .none ? 0 : 1, typedCount)
             switch (live, focus) {
             case (_, .secure):
-                // Password field: on-device transcript to the clipboard only.
-                // Never paste (it isn't a normal field) and never cloud-polish
-                // (it's plausibly a password) — the guard below skips clean().
-                NSLog("Parla finish path: secure field, clipboard only")
-                Inserter.copy(insertText)
-                hud.show(.copied)
-                return .clipboard
+                // Defensive: secure fields are refused at fn-down. Never type,
+                // never store — drop the transcript entirely.
+                NSLog("Parla finish path: secure field, dropped")
+                hud.show(.error("Not supported in password fields"))
+                return nil
             case (true, _):
                 // Diff-based finalize: fix only the diverging tail of the
                 // live-typed text instead of erasing and retyping all of it —
                 // the streamed text usually already equals the final text.
                 let d = LiveTyper.diff(typed: self.typed, new: insertText)
                 if typedCount == 0 {
-                    // Nothing streamed (short utterance): single paste, and
-                    // insert() already leaves insertText in the clipboard.
-                    NSLog("Parla finish path: nothing typed, focused paste")
+                    // Nothing streamed (short utterance): single insert.
+                    NSLog("Parla finish path: nothing typed, focused insert")
                     Inserter.insert(insertText)
                 } else if Inserter.canEraseTyped(self.typed) {
                     NSLog("Parla finish path: ax-verified diff finalize (erase %d)", d.erase)
                     Inserter.typeBackspaces(d.erase)
                     Inserter.typeUnicode(d.append)
-                    Inserter.copy(insertText) // escape-hatch invariant: raw transcript stays in the clipboard
                 } else if d.erase == 0, d.append.isEmpty {
                     // Streamed text already IS the final text — no keystrokes.
                     NSLog("Parla finish path: streamed text already final")
-                    Inserter.copy(insertText)
-                } else if Inserter.selectBackAndVerify(String(self.typed.suffix(d.erase))) {
-                    // Opaque field: the diverging suffix is now the live
-                    // selection — typing replaces exactly it (as in stream()).
-                    NSLog("Parla finish path: select-verified diff finalize (erase %d)", d.erase)
-                    if d.append.isEmpty {
-                        Inserter.typeBackspaces(1) // pure shrink: delete the verified selection
-                    } else {
-                        Inserter.typeUnicode(d.append) // replaces the verified live selection
-                    }
-                    Inserter.copy(insertText)
                 } else {
                     // Can't prove the field still ends with our streamed text —
-                    // leave it in place and offer the transcript instead.
-                    NSLog("Parla finish path: unverified, clipboard only")
-                    Inserter.copy(insertText)
+                    // leave it in place; the transcript is in history.
+                    NSLog("Parla finish path: unverified, history only")
                     hud.show(.polishing)
-                    return .clipboard
+                    return .history
                 }
                 hud.show(.polishing)
                 return .field
             case (false, .unknown), (false, .editable):
-                NSLog("Parla finish path: focused paste")
-                Inserter.insert(insertText) // focus we couldn't stream into: paste at cursor
+                NSLog("Parla finish path: focused insert")
+                Inserter.insert(insertText) // insert at cursor
                 hud.show(.polishing)
                 return .field
             case (false, .none):
-                NSLog("Parla finish path: no focus, clipboard only")
-                Inserter.copy(insertText) // nothing focused: clipboard only, never paste
+                // Nothing focused: never type into the void — history only.
+                NSLog("Parla finish path: no focus, history only")
                 hud.show(.polishing)
-                return .clipboard
+                return .history
             }
         }
+        guard let landing else { return } // dropped: no sound, no polish, no history
         Sound.finish() // raw transcript landed — the user-visible finalize moment
 
-        // Secure field: never send the transcript to the cloud cleanup LLM. The
-        // raw on-device text is already in the clipboard with the .copied HUD.
-        guard focus != .secure, let cleanTask else { return }
+        // Secure field: never send the transcript to the cloud cleanup LLM
+        // (cleanTask is nil only for secure — unreachable past the guard above).
+        guard let cleanTask else { return }
 
         // Async polish: cleanup, then swap raw → cleaned with the same
         // verification machinery. Still on the processTask chain, so a queued
@@ -453,27 +440,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let plan = LiveTyper.swapPlan(raw: insertText, cleaned: cleaned)
             guard gen == self.generation else {
                 // A newer dictation owns the field and HUD — no keystrokes, no
-                // HUD. Cleaned text still lands in the clipboard if it's still
-                // our raw sitting there.
-                NSLog("Parla swap: stale generation, clipboard fallback")
-                if plan != nil, NSPasteboard.general.string(forType: .string) == insertText {
-                    Inserter.copy(cleaned)
-                }
+                // HUD. The cleaned text is still recorded in history below.
+                NSLog("Parla swap: stale generation, history only")
                 return
             }
             switch landing {
-            case .clipboard:
-                // Nothing of ours in a field — just refresh the clipboard
-                // raw → cleaned, unless the user copied something meanwhile.
-                if NSPasteboard.general.string(forType: .string) == insertText {
-                    if plan != nil { Inserter.copy(cleaned) }
-                    hud.show(cleanResult.failed ? .rawFallback : .copied)
-                } else {
-                    hud.hide() // clipboard is the user's now — never clobber
-                }
+            case .history:
+                // Nothing of ours in a field — the transcript (and its polish)
+                // live in history, reachable via ⌃⌘V or the Hub.
+                hud.show(cleanResult.failed ? .rawFallback : .savedToHistory)
             case .field:
                 guard let plan else { // polish was a no-op: either cleanup failed, or the LLM agreed raw was fine
-                    if !cleanResult.failed, settings.restoreClipboard { Inserter.restore(clipboardSnapshot) }
                     hud.show(cleanResult.failed ? .rawFallback : .done)
                     return
                 }
@@ -481,22 +458,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSLog("Parla swap path: ax-verified tail swap (erase %d)", plan.eraseTail.count)
                     Inserter.typeBackspaces(plan.eraseTail.count)
                     Inserter.typeUnicode(plan.replacement)
-                    Inserter.copy(cleaned) // escape-hatch invariant: full final text in the clipboard
-                    // Opt-in: the point of restoreClipboard is to replace that
-                    // escape-hatch copy with whatever the user had before, now
-                    // that the swap is verified to have landed in-field.
-                    if settings.restoreClipboard { Inserter.restore(clipboardSnapshot) }
                     hud.show(.done)
                 } else {
-                    // AX can't prove the field still ends with our paste. No
-                    // select-back copy-probe fallback here: it parks a probe
-                    // marker in the clipboard for up to 600ms per dictation
-                    // (immortalized by clipboard managers), flicker-selects the
-                    // user's text, and Chromium never answers the ⌘C anyway.
-                    // Leave the raw text alone; cleaned to the clipboard.
-                    NSLog("Parla swap path: unverified, cleaned to clipboard")
-                    Inserter.copy(cleaned)
-                    hud.show(.cleanedCopied)
+                    // AX can't prove the field still ends with our text — leave
+                    // the raw alone; the cleaned version is in history.
+                    NSLog("Parla swap path: unverified, cleaned to history")
+                    hud.show(.cleanedInHistory)
                 }
             }
         }
@@ -513,8 +480,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Command mode: transcribe the spoken instruction on-device, transform the
     /// selection captured at fn-down via the cleanup LLM, and replace the live
-    /// selection (paste) if it's still intact — else park the result in the
-    /// clipboard. Runs on the processTask chain like finish().
+    /// selection if it's still intact — else park the result in history. Runs
+    /// on the processTask chain like finish().
     func transform(samples: [Float], selection: String, gen: Int, bundleID: String?) async {
         let hud = self.hud
         defer {
@@ -546,8 +513,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Transform via the cleanup client DIRECTLY (not Pipeline.clean): its
         // raw-transcript fallback would return the spoken instruction on failure,
-        // which must never be pasted over the user's selection. A failure here is
-        // a hard failure — nothing inserted, nothing copied.
+        // which must never be typed over the user's selection. A failure here is
+        // a hard failure — nothing inserted, nothing stored.
         let ctx = CleanupContext(dictionary: settings.dictionary, snippets: [:], appName: nil, selection: selection)
         let transformed: String
         do {
@@ -569,28 +536,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let result = TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(transformed) : transformed
 
         await MainActor.run {
+            // Park in history instead of typing when we can't safely land it —
+            // the only in-app place a result can survive without a clipboard.
+            let park = { (why: String) in
+                NSLog("Parla transform: %@, history fallback", why)
+                if settings.historyEnabled {
+                    self.history.append(HistoryEntry(raw: result, cleaned: nil, appName: nil))
+                }
+            }
             guard gen == self.generation else {
-                // A newer dictation owns the field/HUD — no keystrokes. Park the
-                // result in the clipboard so it isn't lost.
-                NSLog("Parla transform: stale generation, clipboard fallback")
-                Inserter.copy(result)
+                // A newer dictation owns the field/HUD — no keystrokes.
+                park("stale generation")
                 return
             }
             // Only replace if the selection is provably still ours; otherwise the
-            // user clicked away — clipboard it rather than paste over new context.
+            // user clicked away — never type over new context.
             if Inserter.selectedText() == selection {
                 NSLog("Parla transform: selection intact, replacing")
-                Inserter.insert(result) // paste replaces the live selection
+                Inserter.insert(result) // typing replaces the live selection
                 Sound.finish()
                 hud.show(.done)
             } else {
-                NSLog("Parla transform: selection changed, clipboard fallback")
-                Inserter.copy(result)
-                hud.show(.cleanedCopied)
+                park("selection changed")
+                hud.show(.savedToHistory)
             }
         }
-        // ponytail: no history recording for transforms (v1) — the instruction
-        // isn't a dictation, and the source text is the user's, not ours.
+        // ponytail: transforms only reach history on the fallback paths above —
+        // a landed transform isn't a dictation, and the source text is the user's.
     }
 
     /// ~300ms between streaming passes, sliced so fn-up (isRecording flipping
@@ -666,12 +638,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 } else if Inserter.canEraseTyped(self.typed) {
                     Inserter.typeBackspaces(d.erase)
                     Inserter.typeUnicode(d.append)
-                } else if Inserter.selectBackAndVerify(String(self.typed.suffix(d.erase))) {
-                    if d.append.isEmpty {
-                        Inserter.typeBackspaces(1) // pure shrink: delete the selection
-                    } else {
-                        Inserter.typeUnicode(d.append) // replaces the verified live selection
-                    }
                 } else {
                     // Can't prove the tail is ours — never risk foreign text.
                     NSLog("Parla stream: revision skipped, tail unverified (erase %d)", d.erase)
@@ -973,9 +939,8 @@ extension AppDelegate: NSMenuDelegate {
     }
 
     /// Menu actions fire once the menu has dismissed, but focus handoff back to
-    /// the previous app can lag the click — a paste landing too early hits
-    /// nothing. Delay a beat. insert() sets the clipboard first regardless, so
-    /// worst case the text is still there to paste by hand.
+    /// the previous app can lag the click — typing too early hits nothing.
+    /// Delay a beat; worst case the text is still in history to retry.
     private func insertFromMenu(_ text: String) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { Inserter.insert(text) }
     }

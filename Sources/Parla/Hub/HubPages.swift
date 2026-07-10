@@ -435,21 +435,15 @@ struct PrivacyPage: View {
                 }
             }
 
-            HubSection("Clipboard") {
-                HubRow("Restore clipboard after dictation",
-                       detail: "Put back what you had copied once the cleaned text has verifiably landed") {
-                    Toggle("", isOn: $model.settings.restoreClipboard)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                }
-            }
-
             HubSection("How Parla handles your data") {
                 HubRow("Transcription is on-device",
                        detail: "Audio never leaves this Mac — whisper.cpp runs locally") { EmptyView() }
                 HubDivider()
+                HubRow("Clipboard is never touched",
+                       detail: "Text is typed in directly and stored only in history — nothing reaches the clipboard unless you press Copy") { EmptyView() }
+                HubDivider()
                 HubRow("Password fields are protected",
-                       detail: "Secure fields go to the clipboard only and are never sent to the cleanup model") { EmptyView() }
+                       detail: "Dictation is refused in secure fields — nothing is typed, stored, or sent to the cleanup model") { EmptyView() }
                 HubDivider()
                 HubRow("Cleanup sends text only",
                        detail: "Only the transcript text is sent to your configured cleanup provider") { EmptyView() }

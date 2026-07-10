@@ -9,10 +9,10 @@ final class HUD: @unchecked Sendable {
         case listening(command: Bool)  // command: transform-selection mode ("Command…")
         case handsFree      // fn+Space latched: still recording, fn can be released
         case transcribing   // fn-up → raw text landing (fast, on-device)
-        case polishing      // raw landed; LLM cleanup in flight — resolves to done/copied/cleanedCopied
+        case polishing        // raw landed; LLM cleanup in flight — resolves to done/savedToHistory/cleanedInHistory
         case done
-        case copied
-        case cleanedCopied  // swap unverifiable; cleaned text parked in the clipboard
+        case savedToHistory   // nothing landed in a field; transcript lives in history
+        case cleanedInHistory // swap unverifiable; cleaned text only in history
         case rawFallback    // cleanup call failed; raw transcript is final, no swap attempted
         case cancelled      // dictation aborted (key pressed while fn held)
         case error(String)
@@ -252,16 +252,16 @@ final class HUD: @unchecked Sendable {
             label.stringValue = "✓ Pasted"
             panel.orderFrontRegardless()
             scheduleHide()
-        case .copied:
+        case .savedToHistory:
             dot.isHidden = true
             waveform.isHidden = true
-            label.stringValue = "✓ In clipboard"
+            label.stringValue = "✓ Saved to history"
             panel.orderFrontRegardless()
             scheduleHide()
-        case .cleanedCopied:
+        case .cleanedInHistory:
             dot.isHidden = true
             waveform.isHidden = true
-            label.stringValue = "✓ cleaned in clipboard"
+            label.stringValue = "✓ cleaned in history"
             panel.orderFrontRegardless()
             scheduleHide()
         case .rawFallback:

@@ -12,48 +12,12 @@ public enum Inserter {
         event.post(tap: .cghidEventTap)
     }
 
-    /// Clipboard + synthetic ⌘V. The text intentionally STAYS in the clipboard —
-    /// that is the escape hatch when an app rejects the paste.
-    /// ponytail: no clipboard save/restore (racy per architecture.md); add only if users complain.
+    /// Land text at the cursor as synthetic Unicode keystrokes; typing into a
+    /// live selection replaces it, same as paste did. The pasteboard is never
+    /// touched — transcripts live only in the app (history), and the sole
+    /// clipboard write left anywhere is the user-initiated Copy in the Hub.
     public static func insert(_ text: String) {
-        copy(text)
-        // Give the pasteboard a beat before the keystroke lands. setString is
-        // synchronous, so this is only settle time for the pasteboard server —
-        // not a wait for the write itself.
-        usleep(20_000)
-        postCmdV()
-    }
-
-    /// Put text on the clipboard without pasting — the no-focus finalize path.
-    public static func copy(_ text: String) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(text, forType: .string)
-    }
-
-    /// Put the clipboard back to a prior snapshot (opt-in restoreClipboard
-    /// setting). nil snapshot = the prior content wasn't a plain string (an
-    /// image, or empty) — leave the clipboard alone rather than destroy it;
-    /// the dictated text stays there as the escape hatch.
-    // ponytail: string-only snapshots; preserve full pasteboard items if
-    // anyone dictates mid image-paste workflow.
-    public static func restore(_ text: String?) {
-        guard let text else { return }
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(text, forType: .string)
-    }
-
-    static func postCmdV() {
-        let src = CGEventSource(stateID: .combinedSessionState)
-        let vKey: CGKeyCode = 9
-        guard let down = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: true),
-              let up = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: false)
-        else { return }
-        down.flags = .maskCommand
-        up.flags = .maskCommand
-        post(down)
-        post(up)
+        typeUnicode(text)
     }
 
     /// Split UTF-16 units into chunks of at most `max`, never ending a chunk on an
@@ -72,7 +36,7 @@ public enum Inserter {
         return chunks
     }
 
-    /// Fallback: type the text as Unicode keystrokes (layout-independent).
+    /// Type the text as Unicode keystrokes (layout-independent).
     /// Chunked because CGEventKeyboardSetUnicodeString caps around 20 UTF-16 units.
     public static func typeUnicode(_ text: String) {
         let src = CGEventSource(stateID: .combinedSessionState)
@@ -115,8 +79,8 @@ public enum Inserter {
     public enum FocusTarget {
         case editable   // confirmed text field: safe to live-type into
         case unknown    // something is focused but AX can't confirm it's a field: paste, don't stream
-        case none       // no focused element at all: clipboard only
-        case secure     // password field (AXSecureTextField): on-device only, clipboard, never cloud
+        case none       // no focused element at all: history only, nothing typed
+        case secure     // password field (AXSecureTextField): refuse the dictation entirely
     }
 
     /// Best-effort focus classification. Chromium/Electron apps (Chrome, VS Code,
@@ -127,7 +91,7 @@ public enum Inserter {
     public static func focusTarget() -> FocusTarget {
         var result = classifyFocus()
         // Never wake Electron's AX tree for a secure field — the whole point is
-        // to touch it as little as possible (never stream, never paste, never cloud).
+        // to touch it as little as possible (never stream, never type, never cloud).
         if result != .editable, result != .secure, let app = NSWorkspace.shared.frontmostApplication {
             let appEl = AXUIElementCreateApplication(app.processIdentifier)
             AXUIElementSetAttributeValue(appEl, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
@@ -215,8 +179,8 @@ public enum Inserter {
     }
 
     /// True when final replacement can be verified via AX. Fields that merely
-    /// look editable but hide text/cursor state should get one final paste, not
-    /// live streaming that later falls back to clipboard.
+    /// look editable but hide text/cursor state should get one final insert, not
+    /// live streaming that later can't be verified.
     public static func canVerifyFocusedField() -> Bool {
         focusedFieldState() != nil
     }
@@ -249,58 +213,4 @@ public enum Inserter {
         NSPoint(x: origin.x + size.width / 2, y: primaryScreenHeight - (origin.y + size.height / 2))
     }
 
-    static func postKey(_ key: CGKeyCode, flags: CGEventFlags = []) {
-        let src = CGEventSource(stateID: .combinedSessionState)
-        if let down = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: true),
-           let up = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: false) {
-            down.flags = flags
-            up.flags = flags
-            post(down)
-            post(up)
-        }
-    }
-
-    /// Verification for fields AX can't read: select the last `expected.count`
-    /// graphemes with ⇧← and copy them. Match ⇒ returns true with the selection
-    /// LEFT ACTIVE, so the very next typed/pasted text atomically replaces
-    /// exactly those characters and nothing else. Mismatch (or a field where
-    /// selection/copy doesn't work) ⇒ collapses the selection back to the end
-    /// and returns false. Clobbers the clipboard by design — Parla already
-    /// leaves dictated text there.
-    public static func selectBackAndVerify(_ expected: String) -> Bool {
-        guard !expected.isEmpty else { return true }
-        for _ in 0..<expected.count {
-            postKey(123, flags: .maskShift) // ⇧←
-            usleep(10_000)
-        }
-        usleep(80_000)
-        let pb = NSPasteboard.general
-        let prior = pb.string(forType: .string)
-        var marker = "__PARLA_COPY_PROBE__\(UUID().uuidString)"
-        while marker == expected {
-            marker = "__PARLA_COPY_PROBE__\(UUID().uuidString)"
-        }
-        pb.clearContents()
-        pb.setString(marker, forType: .string)
-        postKey(8, flags: .maskCommand) // ⌘C
-        var waited = 0
-        while pb.string(forType: .string) == marker, waited < 600_000 {
-            usleep(20_000)
-            waited += 20_000
-        }
-        let copied = pb.string(forType: .string)
-        if copied == expected {
-            return true
-        }
-        NSLog("Parla select verify failed: %@ expected=%d copied=%d",
-              copied == marker ? "copy-timeout" : "mismatch",
-              expected.count,
-              copied?.count ?? -1)
-        if copied == marker { // probe never got overwritten — take it back off
-            pb.clearContents() // don't leak the probe into clipboard history
-            if let prior { pb.setString(prior, forType: .string) }
-        }
-        postKey(124) // → collapse selection, cursor back to the end
-        return false
-    }
 }

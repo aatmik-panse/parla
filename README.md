@@ -67,31 +67,32 @@ submenu (last 8 dictations, backed by a local 50-entry history) with
 
 Transcription runs *while* you speak, but the field is never touched until you
 release the hotkey: keystrokes posted while fn is physically held merge with
-the modifier (fn+A opens the Dock) and Chromium apps don't answer the
-verification probe, so mid-speech typing is disabled. Instead, Parla
+the modifier (fn+A opens the Dock), so mid-speech typing is disabled. Instead, Parla
 transcribes in the background as you talk — dictations longer than ~15s freeze
 a confirmed prefix at the nearest quiet moment so each pass only
 re-transcribes the recent tail — and on release only the last few seconds of
 unheard audio need a whisper pass. Release latency is therefore independent of
 how long you dictated; an in-flight pass is aborted the moment you let go.
 
-On release, the whole raw transcript lands as a single paste into the focused
-field (HUD: "Transcribing…", then "✓ · polishing…"); no focused field means
-clipboard-only, and password fields are clipboard-only and never sent to the
-cleanup LLM. The LLM-cleaned version swaps in behind it moments later via a
-diff (only the changed tail is backspaced and retyped), landing on one of:
-"✓ Pasted", "✓ In clipboard", "✓ cleaned in clipboard" (swap couldn't be
-verified — cleaned text parked in the clipboard instead), or "✓ raw (cleanup
+On release, the whole raw transcript is typed into the focused field as
+synthetic keystrokes (HUD: "Transcribing…", then "✓ · polishing…"); with no
+focused field nothing is typed — the transcript is only saved to history.
+The clipboard is never touched: text lives in the field and in local history,
+and reaches the clipboard only via the Hub's explicit Copy button. The
+LLM-cleaned version swaps in behind the raw text moments later via a diff
+(only the changed tail is backspaced and retyped), landing on one of:
+"✓ Pasted", "✓ Saved to history", "✓ cleaned in history" (swap couldn't be
+verified — the cleaned text is in history instead), or "✓ raw (cleanup
 failed)". Cancelling (a keypress while fn is held) shows "✕ Cancelled".
 
 ## Command mode
 
 Select some text, hold **⇧+fn**, speak an instruction (e.g. "make this more
 formal"), and release: the selection is transformed by the cleanup model and
-pasted over it. The selection is captured at fn-down and re-verified at
+typed over it. The selection is captured at fn-down and re-verified at
 fn-up — if it's no longer intact (you clicked away or edited it), the result
-goes to the clipboard instead of overwriting new content. A failed transform
-never pastes the spoken instruction itself; nothing is inserted. Password
+is saved to history instead of overwriting new content. A failed transform
+never types the spoken instruction itself; nothing is inserted. Password
 fields and empty selections refuse before recording even starts.
 
 ## Permissions
@@ -102,8 +103,8 @@ Parla needs:
 - **Accessibility** — to listen for the global hotkey and type text into the frontmost app (System Settings > Privacy & Security > Accessibility).
 
 Password fields (`AXSecureTextField`) are detected via Accessibility and
-handled specially: the on-device transcript goes to the clipboard only —
-never pasted, never sent to the cleanup model.
+refused outright: dictation into one shows "Not supported in password
+fields" — nothing is typed, stored in history, or sent to the cleanup model.
 
 ## Configuration
 
@@ -119,8 +120,7 @@ you fix it. Fields:
 - `whisperModelPath` — absolute path to a ggml whisper model. Defaults to the model downloaded by `scripts/download-model.sh`.
 - `showHudAlways` — keep the dictation pill floating on screen as a small idle capsule at all times, expanding into the full pill during dictation. Default `true`; set `false` for a transient pill shown only while dictating.
 - `historyEnabled` — keep a local log of the last 50 dictations (raw + cleaned + app name) at `~/Library/Application Support/Parla/history.json`, for the menu's Paste Last Dictation / Recent. Default `true`. Secure-field and cancelled dictations are never recorded regardless of this setting.
-- `liveStreamingEnabled` — currently ignored: mid-speech typing is hard-disabled (held-fn keystrokes merge with the modifier; Chromium fields fail the verify probe). Transcription still runs while you speak; the text lands as one paste on release.
-- `restoreClipboard` — after a dictation's cleaned text has verifiably landed in a field, put the clipboard back to whatever it held before you started dictating (instead of leaving the dictated text there as an escape hatch). Default `false`. Only string clipboard contents are snapshotted/restored — a non-text clipboard (e.g. an image) is left untouched.
+- `liveStreamingEnabled` — currently ignored: mid-speech typing is hard-disabled (held-fn keystrokes merge with the modifier). Transcription still runs while you speak; the text lands as one insert on release.
 
 ## Cleanup providers
 

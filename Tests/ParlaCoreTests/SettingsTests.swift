@@ -90,17 +90,6 @@ final class SettingsTests: XCTestCase {
         XCTAssertFalse(off.liveStreamingEnabled)
     }
 
-    func testRestoreClipboardDefaultFalse() {
-        XCTAssertFalse(Settings().restoreClipboard)
-    }
-
-    func testRestoreClipboardTolerantDecode() throws {
-        let missing = try JSONDecoder().decode(Settings.self, from: Data(#"{"dictionary":["X"]}"#.utf8))
-        XCTAssertFalse(missing.restoreClipboard)
-        let on = try JSONDecoder().decode(Settings.self, from: Data(#"{"restoreClipboard":true}"#.utf8))
-        XCTAssertTrue(on.restoreClipboard)
-    }
-
     func testInputDeviceUIDDefaultNil() {
         XCTAssertNil(Settings().inputDeviceUID)
     }
