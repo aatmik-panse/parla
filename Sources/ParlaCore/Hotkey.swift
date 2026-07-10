@@ -40,8 +40,9 @@ public final class HotkeyMonitor {
     // MARK: - Pure state machine (exercised by tests; `time` injected so tests never sleep)
 
     /// flagsChanged: fn press starts push-to-talk, fn release finishes it.
-    /// A hands-free session ignores fn entirely — fn+Space is its start/stop,
-    /// handled in keyDown (the release after latching must not finish early).
+    /// During hands-free, any fn press stops and transcribes — the guaranteed
+    /// exit: it can't depend on the Space keyDown carrying the fn flag, and
+    /// the fn release after latching must not finish early (session ≠ .push).
     public func handle(keyCode: UInt16, fnActive: Bool, shiftActive: Bool = false, at time: TimeInterval) {
         // Shift arrives via flagsChanged with keyCode 56/60 (not 63), so this
         // guard drops it — holding/releasing shift can never double-fire .down.
@@ -50,6 +51,9 @@ public final class HotkeyMonitor {
             session = .push
             downAt = time
             onEdge?(.down(command: shiftActive))
+        } else if fnActive, session == .handsFree {
+            session = .idle
+            onEdge?(.up(short: time - downAt < shortTapThreshold))
         } else if !fnActive, session == .push {
             session = .idle
             onEdge?(.up(short: time - downAt < shortTapThreshold))
@@ -60,19 +64,16 @@ public final class HotkeyMonitor {
     /// front app). fnActive comes from the key event's own flags.
     public func keyDown(keyCode: UInt16, fnActive: Bool = false, cmd: Bool = false, ctrl: Bool = false,
                         at time: TimeInterval) -> Bool {
-        if keyCode == 49, fnActive { // fn+Space: hands-free latch / stop / start
+        if keyCode == 49, fnActive { // fn+Space: hands-free latch / stop
             switch session {
             case .push: // convert the held push-to-talk: recording survives fn release
                 session = .handsFree
                 onEdge?(.handsFree)
-            case .handsFree:
+            case .handsFree: // fn held since the latch, so the fn-down stop above never fired
                 session = .idle
                 onEdge?(.up(short: time - downAt < shortTapThreshold))
-            case .idle: // fn held through a previous stop — start a fresh session
-                session = .handsFree
-                downAt = time
-                onEdge?(.down(command: false))
-                onEdge?(.handsFree)
+            case .idle: // fn-down just stopped the session — swallow the chord's Space, no restart
+                break
             }
             return true
         }
