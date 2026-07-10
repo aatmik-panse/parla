@@ -248,7 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if silent { hud.hide() } else { hud.show(.cancelled) }
             }
         }
-        setStatus(idleIcon)
+        showIdle()
     }
 
     func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget, gen: Int,
@@ -259,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Don't stamp over an active recording, and keep ⚠️ visible
                 // while there's no model / settings are broken / permissions missing.
                 guard !self.isRecording else { return }
-                self.setStatus(self.idleIcon)
+                self.showIdle()
             }
         }
         guard let transcriber else {
@@ -490,7 +490,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         defer {
             DispatchQueue.main.async {
                 guard !self.isRecording else { return }
-                self.setStatus(self.idleIcon)
+                self.showIdle()
             }
         }
         guard let transcriber else {
@@ -662,7 +662,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let path = store.load().whisperModelPath ?? WhisperTranscriber.defaultModelPath()
         transcriber = try? WhisperTranscriber(modelPath: path)
         hubModel.modelLoaded = transcriber != nil
-        setStatus(idleIcon)
+        showIdle()
         if let transcriber {
             // First whisper inference pays Metal shader/graph setup (hundreds of ms) —
             // warm it now on throwaway silence so the user's first real dictation
@@ -693,15 +693,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var micGranted: Bool { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
     var axGranted: Bool { AXIsProcessTrusted() }
 
-    /// Idle menu-bar glyph: ⚠️ if anything needs the user's attention (no model,
-    /// broken settings.json, missing permission), else the plain mic icon.
-    /// store.lastError reflects the most recent load() — refreshed at launch
-    /// and on every dictation (finish() reloads settings each time).
-    var idleIcon: String {
-        (transcriber != nil && store.lastError == nil && micGranted && axGranted) ? "🎤" : "⚠️"
+    /// Menu-bar glyph rendered from the app logo (waveform). isTemplate lets macOS
+    /// tint it for the light/dark menu bar. nil under `swift run` (no bundle) → we
+    /// fall back to the 🎤 emoji. Sized to ~18pt tall, keeping the logo's aspect.
+    static let menuBarIcon: NSImage? = {
+        guard let url = Bundle.main.url(forResource: "menubar", withExtension: "png"),
+              let img = NSImage(contentsOf: url) else { return nil }
+        img.isTemplate = true
+        let h = 18.0
+        img.size = NSSize(width: h * img.size.width / img.size.height, height: h)
+        return img
+    }()
+
+    /// Idle menu-bar state: the logo glyph when healthy, ⚠️ if anything needs the
+    /// user's attention (no model, broken settings.json, missing permission).
+    /// store.lastError reflects the most recent load() — refreshed at launch and on
+    /// every dictation (finish() reloads settings each time).
+    func showIdle() {
+        let healthy = transcriber != nil && store.lastError == nil && micGranted && axGranted
+        if healthy, let icon = Self.menuBarIcon {
+            statusItem.button?.title = ""
+            statusItem.button?.image = icon
+        } else {
+            setStatus(healthy ? "🎤" : "⚠️")
+        }
     }
 
-    func setStatus(_ s: String) { statusItem.button?.title = s }
+    // Text/emoji states (🔴 recording, … transcribing, ⚠️ error, ⬇️% download) clear
+    // any logo image first so they don't render side by side.
+    func setStatus(_ s: String) {
+        statusItem.button?.image = nil
+        statusItem.button?.title = s
+    }
 
     func buildMenu() {
         let menu = NSMenu()
@@ -717,33 +740,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try? store.save(store.load())
         }
         NSWorkspace.shared.open(store.url)
-    }
-
-    /// Paste-an-API-key box: writes anthropicApiKey to settings.json, which
-    /// every dictation re-reads — no in-memory refresh needed.
-    @objc func setAPIKey() {
-        var settings = store.load()
-        if store.lastError != nil {
-            // Saving over a broken settings.json would clobber the user's file
-            // with defaults — send them to fix it instead (same rule as openSettings).
-            NSWorkspace.shared.open(store.url)
-            return
-        }
-        let alert = NSAlert()
-        alert.messageText = "Anthropic API Key"
-        alert.informativeText = "Used to clean up transcripts. Stored in settings.json (remove it there to clear)."
-        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        field.placeholderString = settings.anthropicApiKey == nil ? "sk-ant-…" : "•••••••• (key currently set)"
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        NSApp.activate(ignoringOtherApps: true) // LSUIElement app: modal needs focus
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return } // empty Save = no change, not key removal
-        settings.anthropicApiKey = key
-        do { try store.save(settings) } catch { hud.show(.error("Couldn't save settings")) }
     }
 
     @objc func openPrivacyPane(_ sender: NSMenuItem) {
@@ -799,10 +795,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let error {
             NSLog("Parla model download failed: \(error)")
             hud.show(.error("Model download failed"))
-            setStatus(idleIcon)
+            showIdle()
             return
         }
-        loadModel() // clears the ⚠️ when it succeeds (setStatus(idleIcon) inside)
+        loadModel() // clears the ⚠️ when it succeeds (showIdle() inside)
     }
 }
 
@@ -843,9 +839,10 @@ extension AppDelegate: NSMenuDelegate {
 
         addHistoryItems(to: menu)
 
-        menu.addItem(permissionItem(name: "Microphone", granted: micGranted, pane: "Privacy_Microphone"))
-        menu.addItem(permissionItem(name: "Accessibility", granted: axGranted, pane: "Privacy_Accessibility"))
-        menu.addItem(.separator())
+        // Permissions surface only when missing — a granted app needs no reminder.
+        if !micGranted { menu.addItem(permissionItem(name: "Microphone", pane: "Privacy_Microphone")) }
+        if !axGranted { menu.addItem(permissionItem(name: "Accessibility", pane: "Privacy_Accessibility")) }
+        if !micGranted || !axGranted { menu.addItem(.separator()) }
 
         let launch = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launch.target = self
@@ -853,15 +850,9 @@ extension AppDelegate: NSMenuDelegate {
         menu.addItem(launch)
         menu.addItem(.separator())
 
-        let apiKey = NSMenuItem(title: "Set API Key…", action: #selector(setAPIKey), keyEquivalent: "")
-        apiKey.target = self
-        menu.addItem(apiKey)
-        let open = NSMenuItem(title: "Open Settings File", action: #selector(openSettings), keyEquivalent: "")
-        open.target = self
-        menu.addItem(open)
         menu.addItem(NSMenuItem(title: "Quit Parla", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
-        setStatus(idleIcon) // menu open is a free moment to reconcile the icon too
+        showIdle() // menu open is a free moment to reconcile the icon too
     }
 
     /// "Paste Last Dictation" + a "Recent" submenu (up to 8, newest first) with
@@ -942,10 +933,7 @@ extension AppDelegate: NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { Inserter.insert(text) }
     }
 
-    private func permissionItem(name: String, granted: Bool, pane: String) -> NSMenuItem {
-        guard !granted else {
-            return NSMenuItem(title: "\(name): ✓ granted", action: nil, keyEquivalent: "")
-        }
+    private func permissionItem(name: String, pane: String) -> NSMenuItem {
         let item = NSMenuItem(title: "⚠️ \(name): not granted — click to open settings",
                                action: #selector(openPrivacyPane(_:)), keyEquivalent: "")
         item.target = self

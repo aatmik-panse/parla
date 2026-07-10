@@ -5,8 +5,10 @@ cd "$(dirname "$0")/.."
 swift build -c release
 APP=Parla.app
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
 cp .build/release/Parla "$APP/Contents/MacOS/Parla"
+# App icon (Finder/Cmd-Tab/About) + menu-bar template glyph. Regenerate with scripts/make-icon.sh.
+cp Resources/AppIcon.icns Resources/menubar.png "$APP/Contents/Resources/"
 # whisper is a dylib framework now (v1.9.1 xcframework) — bundle it and point
 # the binary's @rpath at Contents/Frameworks or the app dies on launch.
 cp -R .build/release/whisper.framework "$APP/Contents/Frameworks/"
@@ -21,6 +23,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
     <key>CFBundleExecutable</key><string>Parla</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSUIElement</key><true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Parla records while you hold the hotkey to transcribe your speech on-device.</string>
