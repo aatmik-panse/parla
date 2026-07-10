@@ -25,7 +25,7 @@ public struct CleanupSettings: Codable, Equatable {
 public struct Settings: Codable, Equatable {
     public var dictionary: [String] = []
     public var snippets: [String: String] = [:]
-    public var cleanupModel: String = "claude-opus-4-6"
+    public var cleanupModel: String = "claude-sonnet-5"
     public var anthropicApiKey: String? = nil
     public var whisperModelPath: String? = nil
     public var cleanup: CleanupSettings = CleanupSettings()

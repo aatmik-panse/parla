@@ -179,7 +179,7 @@ struct CleanupPage: View {
                 HubSection("Anthropic",
                            footer: "The ANTHROPIC_API_KEY environment variable takes precedence over the key stored here (terminal launches only).") {
                     HubRow("Model") {
-                        TextField("claude-opus-4-6", text: $model.settings.cleanupModel)
+                        TextField("claude-sonnet-5", text: $model.settings.cleanupModel)
                             .hubField().frame(width: 260)
                     }
                     HubDivider()

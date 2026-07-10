@@ -33,7 +33,23 @@ public struct Pipeline {
         let ctx = CleanupContext(dictionary: s.dictionary, snippets: s.snippets,
                                  appName: frontAppName())
         do {
-            return (CleanupSanitizer.sanitize(try await cleanup(transcript, ctx)), false)
+            let cleaned = CleanupSanitizer.sanitize(try await cleanup(transcript, ctx))
+            if cleaned.isEmpty {
+                NSLog("Parla cleanup sanitized to empty, keeping raw transcript")
+                return (transcript, true)
+            }
+            // ponytail: char-count ceiling against LLM repetition loops (same
+            // failure class as the whisper loops guarded in Transcriber). Cleanup
+            // legitimately grows text a little (punctuation) and snippet expansions
+            // a lot, so allow 2x + 200 plus every configured expansion; upgrade to
+            // repeated-substring detection if a real cleanup ever trips this.
+            let allowance = 2 * transcript.count + 200
+                + s.snippets.values.reduce(0) { $0 + $1.count }
+            if cleaned.count > allowance {
+                NSLog("Parla cleanup output degenerate (\(cleaned.count) chars for \(transcript.count)-char transcript), keeping raw transcript")
+                return (transcript, true)
+            }
+            return (cleaned, false)
         } catch {
             NSLog("Parla cleanup failed, keeping raw transcript: \(error)")
             return (transcript, true)

@@ -370,8 +370,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // lands in the field — the async swap below must diff against IT, not raw.
         let insertText = TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(raw) : raw
 
+        // Cleanup intent, decided once from the latched settings. Configured
+        // means the user set a key (anthropic) or a baseURL (openai-compatible)
+        // even if it's invalid — a broken config must still attempt and surface
+        // raw-fallback, while keyless (a supported config) skips the polish leg
+        // instead of flashing "polishing…" into a guaranteed "failed" toast.
+        let cleanupConfigured = cleanupIsConfigured(
+            settings: settings, env: ProcessInfo.processInfo.environment)
+
+        // Cloud gate: if focus already moved into a password field, never even
+        // start the cleanup POST. The landing block re-checks before keystrokes;
+        // this earlier check keeps the transcript off the network too.
+        let secureNow = await MainActor.run { Inserter.focusTarget() == .secure }
+
         let cleanTask: Task<(text: String, failed: Bool), Never>?
-        if focus != .secure {
+        if focus != .secure, !secureNow, cleanupConfigured {
             cleanTask = Task { await pipeline.clean(transcript: raw) }
         } else {
             cleanTask = nil
@@ -382,10 +395,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let landing: Landing? = await MainActor.run {
             let typedCount = self.typed.count // graphemes streamed live so far
             defer { self.typed = "" }
+            // `focus` was latched at fn-down; re-check BEFORE the transcript is
+            // logged so a password dictated into a moved-into secure field never
+            // reaches unified logging. Same semantics as the (_, .secure) arm
+            // below: never type, never log, never store — drop it (cancel is
+            // best-effort, the cleanup call may already be in flight).
+            if Inserter.focusTarget() == .secure {
+                NSLog("Parla finish path: focus moved to secure field, dropped")
+                cleanTask?.cancel()
+                hud.show(.error("Not supported in password fields"))
+                return nil
+            }
             // Never log the transcript for a secure field — it's plausibly a
             // password, and unified logging is readable in Console.
             NSLog("Parla finish: raw=%@ live=%d focus=%d typed=%d",
                   focus == .secure ? "<secure>" : insertText, live ? 1 : 0, focus == .none ? 0 : 1, typedCount)
+            // Show "polishing…" only when a polish is actually coming; with no
+            // cleanTask the raw transcript IS final — land the terminal HUD
+            // state directly, no interstitial that nothing will ever resolve.
+            let fieldHUD: HUD.State = cleanTask != nil ? .polishing : .done
+            let historyHUD: HUD.State = cleanTask != nil ? .polishing : .savedToHistory
             switch (live, focus) {
             case (_, .secure):
                 // Defensive: secure fields are refused at fn-down. Never type,
@@ -413,29 +442,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // Can't prove the field still ends with our streamed text —
                     // leave it in place; the transcript is in history.
                     NSLog("Parla finish path: unverified, history only")
-                    hud.show(.polishing)
+                    hud.show(historyHUD)
                     return .history
                 }
-                hud.show(.polishing)
+                hud.show(fieldHUD)
                 return .field
             case (false, .unknown), (false, .editable):
                 NSLog("Parla finish path: focused insert")
                 Inserter.insert(insertText) // insert at cursor
-                hud.show(.polishing)
+                hud.show(fieldHUD)
                 return .field
             case (false, .none):
                 // Nothing focused: never type into the void — history only.
                 NSLog("Parla finish path: no focus, history only")
-                hud.show(.polishing)
+                hud.show(historyHUD)
                 return .history
             }
         }
         guard let landing else { return } // dropped: no sound, no polish, no history
         Sound.finish() // raw transcript landed — the user-visible finalize moment
 
-        // Secure field: never send the transcript to the cloud cleanup LLM
-        // (cleanTask is nil only for secure — unreachable past the guard above).
-        guard let cleanTask else { return }
+        // cleanTask is nil for secure fields (unreachable here — they returned
+        // nil landing above), when cleanup is unconfigured, and when the cloud
+        // gate saw a transient secure focus: the raw transcript is final,
+        // record it and stop — no polish, no swap.
+        guard let cleanTask else {
+            if settings.historyEnabled {
+                let entry = HistoryEntry(raw: raw, cleaned: nil, appName: appName)
+                await MainActor.run { self.history.append(entry) }
+            }
+            return
+        }
 
         // Async polish: cleanup, then swap raw → cleaned with the same
         // verification machinery. Still on the processTask chain, so a queued
@@ -505,6 +542,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let settings = store.load()
+        // Transforms REQUIRE the cleanup LLM (no raw fallback here) — fail fast
+        // with the real reason before burning a whisper pass, instead of a
+        // misleading "Transform failed" after it. A configured-but-broken setup
+        // still proceeds and hard-fails so the misconfiguration surfaces.
+        guard cleanupIsConfigured(settings: settings, env: ProcessInfo.processInfo.environment) else {
+            NSLog("Parla transform: cleanup not configured")
+            DispatchQueue.main.async { hud.show(.error("Cleanup not configured")) }
+            return
+        }
         // Same min-audio floor as dictation: too short/silent = no instruction.
         guard TextRules.audioWorthTranscribing(sampleCount: samples.count, rms: AudioRecorder.rms(samples)) else {
             NSLog("Parla transform: audio below min-audio floor")
@@ -556,6 +602,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard gen == self.generation else {
                 // A newer dictation owns the field/HUD — no keystrokes.
                 park("stale generation")
+                return
+            }
+            // Same insert-time re-check as finish(): focus may have moved into
+            // a password field since fn-down — never type there, and don't even
+            // query its selection. The result derives from the user's own
+            // (non-secure) selection, so parking it in history is safe.
+            guard Inserter.focusTarget() != .secure else {
+                park("focus moved to secure field")
+                hud.show(.savedToHistory)
                 return
             }
             // Only replace if the selection is provably still ours; otherwise the

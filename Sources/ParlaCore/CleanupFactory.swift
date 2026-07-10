@@ -25,6 +25,19 @@ private func validBaseURL(_ raw: String?) -> URL? {
     return url
 }
 
+/// True when the user has set cleanup up at all — a key for anthropic, a
+/// non-empty baseURL for openai-compatible — even if that config is invalid.
+/// Callers use this to tell "cleanup off" (skip the polish leg silently)
+/// from "cleanup broken" (attempt it and surface the failure as raw-fallback).
+public func cleanupIsConfigured(settings: Settings, env: [String: String]) -> Bool {
+    switch settings.cleanup.provider {
+    case "openai-compatible":
+        return !(settings.cleanup.baseURL ?? "").isEmpty
+    default:
+        return anthropicKey(settings: settings, env: env) != nil
+    }
+}
+
 /// Provider URL to pre-warm, or nil when cleanup is not configured.
 public func cleanupWarmURL(settings: Settings, env: [String: String]) -> URL? {
     let c = settings.cleanup

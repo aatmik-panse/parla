@@ -3,10 +3,12 @@ import XCTest
 
 final class PipelineTests: XCTestCase {
     func makePipeline(transcript: String,
+                      snippets: [String: String] = [:],
                       cleanup: @escaping (String, CleanupContext) async throws -> String)
     -> Pipeline {
         var settings = Settings()
         settings.dictionary = ["Kubernetes", "Daksh"]
+        settings.snippets = snippets
         return Pipeline(
             transcribe: { _, prompt in
                 XCTAssertEqual(prompt, "Kubernetes, Daksh")
@@ -61,5 +63,51 @@ final class PipelineTests: XCTestCase {
         let p = makePipeline(transcript: "  ") { t, _ in t }
         let out = await p.process(samples: [0.1])
         XCTAssertNil(out)
+    }
+
+    // Repetition-loop class output (see the ponytail ceiling in Pipeline.clean)
+    // must never replace the raw transcript.
+    func testDegenerateOutputFallsBackToRaw() async {
+        let p = makePipeline(transcript: "hello there") { t, _ in
+            String(repeating: t + " ", count: 30)
+        }
+        let result = await p.clean(transcript: "hello there")
+        XCTAssertEqual(result.text, "hello there")
+        XCTAssertTrue(result.failed)
+    }
+
+    // Pins the exact boundary: allowance = 2*raw + 200, failure strictly above it.
+    func testLengthAllowanceBoundary() async {
+        let raw = String(repeating: "a", count: 10) // allowance = 2*10 + 200 = 220
+
+        let over = makePipeline(transcript: raw) { _, _ in String(repeating: "b", count: 221) }
+        let overResult = await over.clean(transcript: raw)
+        XCTAssertTrue(overResult.failed)
+        XCTAssertEqual(overResult.text, raw)
+
+        let atLimit = makePipeline(transcript: raw) { _, _ in String(repeating: "b", count: 220) }
+        let atResult = await atLimit.clean(transcript: raw)
+        XCTAssertFalse(atResult.failed)
+        XCTAssertEqual(atResult.text.count, 220)
+    }
+
+    // Configured snippet expansions legitimately grow output — they raise the
+    // allowance so a triggered expansion isn't misread as a repetition loop.
+    func testSnippetExpansionsRaiseAllowance() async {
+        let expansion = String(repeating: "x", count: 630)
+        let p = makePipeline(transcript: "cal one", // base allowance 2*7 + 200 = 214
+                             snippets: ["cal one": expansion]) { _, _ in expansion }
+        let result = await p.clean(transcript: "cal one")
+        XCTAssertFalse(result.failed) // 630 > 214, but ≤ 214 + 630
+        XCTAssertEqual(result.text, expansion)
+    }
+
+    // A bare quote pair sanitizes to nothing — success with empty text would
+    // pass swapPlan's non-empty check upstream, so it must report failure here.
+    func testSanitizedToEmptyFallsBackToRaw() async {
+        let p = makePipeline(transcript: "raw words") { _, _ in "\"\"" }
+        let result = await p.clean(transcript: "raw words")
+        XCTAssertEqual(result.text, "raw words")
+        XCTAssertTrue(result.failed)
     }
 }

@@ -54,10 +54,14 @@ public struct OpenAICompatClient: CleanupProviding {
         req.timeoutInterval = 15
         let body: [String: Any] = [
             "model": modelID,
-            "max_tokens": 1024,
+            "max_tokens": 8192,
+            // 0.2: low enough to keep the cleanup faithful, non-zero to avoid
+            // greedy-decoding repetition loops on small local models.
+            "temperature": 0.2,
             "messages": [
                 ["role": "system", "content": PromptBuilder.system(context: context)],
-                ["role": "user", "content": transcript],
+                ["role": "user",
+                 "content": PromptBuilder.user(transcript: transcript, context: context)],
             ],
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -73,10 +77,14 @@ public struct OpenAICompatClient: CleanupProviding {
             struct Choice: Decodable {
                 struct Message: Decodable { let content: String? }
                 let message: Message
+                let finish_reason: String?
             }
             let choices: [Choice]
         }
         let decoded = try JSONDecoder().decode(Response.self, from: data)
+        guard decoded.choices.first?.finish_reason != "length" else {
+            throw CleanupError(description: "cleanup response truncated (finish_reason=length)")
+        }
         let text = decoded.choices.first?.message.content ?? ""
         guard !text.isEmpty else { throw CleanupError(description: "empty response") }
         return text

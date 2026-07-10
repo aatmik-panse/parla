@@ -98,6 +98,32 @@ final class CleanupFactoryTests: XCTestCase {
                        "http://localhost:11434/v1")
     }
 
+    // Configured ≠ valid: "configured" means the user set cleanup up at all, so
+    // callers can tell "cleanup off" (skip silently) from "cleanup broken"
+    // (attempt and surface the failure). An invalid baseURL is configured.
+    func testCleanupIsConfiguredDistinguishesOffFromBroken() {
+        var s = Settings()
+        XCTAssertFalse(cleanupIsConfigured(settings: s, env: [:]))                  // off
+        XCTAssertTrue(cleanupIsConfigured(settings: s, env: ["ANTHROPIC_API_KEY": "k"]))
+        s.anthropicApiKey = "k"
+        XCTAssertTrue(cleanupIsConfigured(settings: s, env: [:]))
+
+        s = Settings()
+        s.cleanup.provider = "openai-compatible"
+        XCTAssertFalse(cleanupIsConfigured(settings: s, env: [:]))                  // off
+        s.cleanup.baseURL = ""
+        XCTAssertFalse(cleanupIsConfigured(settings: s, env: [:]))                  // off
+        s.cleanup.baseURL = "ollama"                                                // broken
+        XCTAssertTrue(cleanupIsConfigured(settings: s, env: [:]))
+        XCTAssertThrowsError(try makeCleanupClient(settings: s, env: [:]))          // still throws
+        s.cleanup.baseURL = "http://localhost:11434/v1"
+        XCTAssertTrue(cleanupIsConfigured(settings: s, env: [:]))
+        // anthropic key does not leak across providers
+        XCTAssertFalse(cleanupIsConfigured(
+            settings: { var t = s; t.cleanup.baseURL = nil; return t }(),
+            env: ["ANTHROPIC_API_KEY": "k"]))
+    }
+
     func testUnknownProviderTreatedAsAnthropic() async throws {
         var s = Settings()
         s.cleanup.provider = "some-future-thing"
