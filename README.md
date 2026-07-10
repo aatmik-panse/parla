@@ -128,11 +128,11 @@ Cleanup defaults to **Anthropic** (the `cleanupModel` + `anthropicApiKey`/`ANTHR
 
 - `cleanup.provider` — `"anthropic"` (default) or `"openai-compatible"`.
 - `cleanup.baseURL` — required for `openai-compatible`; the API root (Parla POSTs to `{baseURL}/chat/completions`).
-- `cleanup.model` — required for `openai-compatible`; for Anthropic it overrides `cleanupModel`.
+- `cleanup.model` — model id; empty uses the server's first model.
 - `cleanup.apiKeyEnvVar` — name of the env var holding the key (takes precedence over `cleanup.apiKey`).
 - `cleanup.apiKey` — inline key fallback. Omit both for keyless local servers (Ollama).
 
-Key resolution: `cleanup.apiKeyEnvVar` → `cleanup.apiKey` → (Anthropic only) `ANTHROPIC_API_KEY` → `anthropicApiKey`. Any misconfiguration falls back to inserting the raw transcript.
+The `cleanup.model`/`cleanup.apiKeyEnvVar`/`cleanup.apiKey` fields apply to `openai-compatible` only; Anthropic always uses `cleanupModel` and `ANTHROPIC_API_KEY` → `anthropicApiKey`. The two providers' settings coexist, so switching back and forth loses nothing. Any misconfiguration falls back to inserting the raw transcript.
 
 **Groq** (set `GROQ_API_KEY`):
 

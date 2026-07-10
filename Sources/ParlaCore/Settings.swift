@@ -3,7 +3,9 @@ import Foundation
 public struct CleanupSettings: Codable, Equatable {
     public var provider: String = "anthropic"   // "anthropic" | "openai-compatible"
     public var baseURL: String? = nil            // required for openai-compatible
-    public var model: String? = nil              // openai-compatible: required; anthropic: overrides cleanupModel
+    // These three apply to openai-compatible only; anthropic uses the top-level
+    // cleanupModel/anthropicApiKey fields.
+    public var model: String? = nil              // nil ⇒ server's first model
     public var apiKeyEnvVar: String? = nil       // name of env var holding the key
     public var apiKey: String? = nil             // inline fallback
     public init() {}

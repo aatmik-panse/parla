@@ -39,25 +39,40 @@ final class CleanupFactoryTests: XCTestCase {
 
     func testEnvVarKeyBeatsInlineApiKey() async throws {
         var s = Settings()
+        s.cleanup.provider = "openai-compatible"
+        s.cleanup.baseURL = "http://localhost:11434/v1"
+        s.cleanup.model = "llama3"
         s.cleanup.apiKeyEnvVar = "MY_KEY"
         s.cleanup.apiKey = "inline-key"
         let http = mock()
         let client = try makeCleanupClient(
             settings: s, env: ["MY_KEY": "env-var-key"], http: http)
         _ = try await client.clean(transcript: "x", context: ctx)
-        XCTAssertEqual(http.lastRequest?.value(forHTTPHeaderField: "x-api-key"), "env-var-key")
+        XCTAssertEqual(http.lastRequest?.value(forHTTPHeaderField: "Authorization"),
+                       "Bearer env-var-key")
     }
 
-    func testAnthropicCleanupModelOverride() async throws {
+    // Both providers' settings coexist; anthropic reads only its own fields.
+    func testAnthropicIgnoresOpenAICompatFields() async throws {
         var s = Settings()
-        s.anthropicApiKey = "k"
+        s.anthropicApiKey = "anthropic-key"
         s.cleanupModel = "claude-haiku-4-5"
-        s.cleanup.model = "claude-sonnet-4-5"
+        s.cleanup.model = "llama3"
+        s.cleanup.apiKey = "openai-key"
         let http = mock()
         let client = try makeCleanupClient(settings: s, env: [:], http: http)
         _ = try await client.clean(transcript: "x", context: ctx)
-        let json = try JSONSerialization.jsonObject(with: http.lastRequest!.httpBody!) as! [String: Any]
-        XCTAssertEqual(json["model"] as? String, "claude-sonnet-4-5")
+        let req = http.lastRequest!
+        XCTAssertEqual(req.value(forHTTPHeaderField: "x-api-key"), "anthropic-key")
+        let json = try JSONSerialization.jsonObject(with: req.httpBody!) as! [String: Any]
+        XCTAssertEqual(json["model"] as? String, "claude-haiku-4-5")
+    }
+
+    func testAnthropicMissingKeyThrowsEvenWithOpenAICompatKey() {
+        var s = Settings()
+        s.cleanup.apiKey = "openai-key"  // wrong provider's key must not satisfy anthropic
+        XCTAssertThrowsError(try makeCleanupClient(settings: s, env: [:]))
+        XCTAssertNil(cleanupWarmURL(settings: s, env: [:]))
     }
 
     func testAnthropicMissingKeyThrows() {

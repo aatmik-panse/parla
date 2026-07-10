@@ -1,14 +1,18 @@
 import Foundation
 
-private func resolvedCleanupKey(
-    settings: Settings, env: [String: String], anthropicLegacy: Bool
-) -> String? {
+// Each provider resolves its key from its own fields only — anthropic never
+// reads cleanup.apiKey/apiKeyEnvVar, so switching providers can't leak a stale
+// key across, and settings for both providers may coexist.
+private func anthropicKey(settings: Settings, env: [String: String]) -> String? {
+    if let v = env["ANTHROPIC_API_KEY"], !v.isEmpty { return v }
+    if let k = settings.anthropicApiKey, !k.isEmpty { return k }
+    return nil
+}
+
+private func openAICompatKey(settings: Settings, env: [String: String]) -> String? {
     let c = settings.cleanup
     if let name = c.apiKeyEnvVar, let v = env[name], !v.isEmpty { return v }
     if let k = c.apiKey, !k.isEmpty { return k }
-    guard anthropicLegacy else { return nil }
-    if let v = env["ANTHROPIC_API_KEY"], !v.isEmpty { return v }
-    if let k = settings.anthropicApiKey, !k.isEmpty { return k }
     return nil
 }
 
@@ -29,9 +33,7 @@ public func cleanupWarmURL(settings: Settings, env: [String: String]) -> URL? {
         guard let url = validBaseURL(c.baseURL) else { return nil }
         return url
     default:
-        guard resolvedCleanupKey(settings: settings, env: env, anthropicLegacy: true) != nil else {
-            return nil
-        }
+        guard anthropicKey(settings: settings, env: env) != nil else { return nil }
         return URL(string: "https://api.anthropic.com")
     }
 }
@@ -56,12 +58,12 @@ public func makeCleanupClient(
         let model = (c.model?.isEmpty ?? true) ? nil : c.model
         return OpenAICompatClient(
             baseURL: baseURL,
-            apiKey: resolvedCleanupKey(settings: settings, env: env, anthropicLegacy: false),
+            apiKey: openAICompatKey(settings: settings, env: env),
             model: model, http: http)
     default:  // "anthropic" or any unknown value
-        guard let key = resolvedCleanupKey(settings: settings, env: env, anthropicLegacy: true) else {
-            throw CleanupError(description: "no API key (set ANTHROPIC_API_KEY, cleanup.apiKey/apiKeyEnvVar, or anthropicApiKey)")
+        guard let key = anthropicKey(settings: settings, env: env) else {
+            throw CleanupError(description: "no API key (set ANTHROPIC_API_KEY or anthropicApiKey)")
         }
-        return CleanupClient(apiKey: key, model: c.model ?? settings.cleanupModel, http: http)
+        return CleanupClient(apiKey: key, model: settings.cleanupModel, http: http)
     }
 }
