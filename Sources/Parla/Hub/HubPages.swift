@@ -81,16 +81,24 @@ struct GeneralPage: View {
             }
 
             HubSection("Shortcuts", footer: "Shortcuts are fixed in this version.") {
-                HubRow("Dictate", detail: "Hold, speak, release") {
+                HubRow("Push to talk", detail: "Hold to say something short") {
                     ShortcutPill(text: "fn 🌐")
+                }
+                HubDivider()
+                HubRow("Hands-free mode", detail: "Press to start and stop dictating") {
+                    ShortcutPill(text: "fn 🌐 + Space")
                 }
                 HubDivider()
                 HubRow("Command mode", detail: "Transform selected text by voice") {
                     ShortcutPill(text: "⇧ fn")
                 }
                 HubDivider()
-                HubRow("Cancel", detail: "While dictating") {
-                    ShortcutPill(text: "any key")
+                HubRow("Paste last transcript", detail: "Paste the last thing you dictated") {
+                    ShortcutPill(text: "⌃ ⌘ V")
+                }
+                HubDivider()
+                HubRow("Cancel", detail: "Dismiss dictation and notifications") {
+                    ShortcutPill(text: "esc")
                 }
             }
         }

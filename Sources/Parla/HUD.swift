@@ -7,6 +7,7 @@ import ParlaCore
 final class HUD: @unchecked Sendable {
     enum State {
         case listening(command: Bool)  // command: transform-selection mode ("Command…")
+        case handsFree      // fn+Space latched: still recording, fn can be released
         case transcribing   // fn-up → raw text landing (fast, on-device)
         case polishing      // raw landed; LLM cleanup in flight — resolves to done/copied/cleanedCopied
         case done
@@ -215,9 +216,10 @@ final class HUD: @unchecked Sendable {
         // .listening moves to the screen the user is dictating into; every other
         // state stays on the panel's current screen.
         if case .listening = state { expand(to: Self.activeScreen()) } else { expand() }
-        if case .listening = state {
+        switch state {
+        case .listening, .handsFree:
             label.frame = NSRect(x: 158, y: 12, width: 92, height: 20)
-        } else {
+        default:
             // No waveform in these states — let longer labels use the full pill.
             label.frame = NSRect(x: 16, y: 12, width: 228, height: 20)
         }
@@ -227,6 +229,12 @@ final class HUD: @unchecked Sendable {
             waveform.isHidden = false
             waveform.clear()
             label.stringValue = command ? "Command…" : "Listening…"
+            panel.orderFrontRegardless()
+        case .handsFree:
+            // Mid-recording relabel: keep the waveform flowing (no clear()).
+            dot.isHidden = false
+            waveform.isHidden = false
+            label.stringValue = "Hands-free…"
             panel.orderFrontRegardless()
         case .transcribing:
             dot.isHidden = true
@@ -280,6 +288,13 @@ final class HUD: @unchecked Sendable {
     func push(level: Float) { waveform.push(level: level) }
 
     func hide() { settle() }
+
+    /// Esc while idle: dismiss a visible toast without disturbing the idle bar
+    /// (Esc fires constantly in normal use — this must be a no-op then).
+    func dismiss() {
+        guard panel.isVisible, !isIdle else { return }
+        settle()
+    }
 
     private func scheduleHide() {
         let item = DispatchWorkItem { [weak self] in self?.settle() }

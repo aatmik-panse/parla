@@ -14,6 +14,7 @@ enum Sound {
     static func start()  { play("Tink") }   // record-start
     static func finish() { play("Glass") }  // raw transcript landed
     static func cancel() { play("Funk") }   // dictation aborted
+    static func latch()  { play("Pop") }    // fn+Space: hands-free engaged
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -215,12 +216,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                       appName: appName, clipboardSnapshot: clipboardSnapshot, settings: settings)
                 }
             case .cancel:
-                // A real key was pressed while fn was held (fn+arrow, Esc): abort.
+                // Esc, or a real key pressed while fn was held (fn+arrow): abort.
                 NSLog("Parla: cancelled by keypress")
                 self.cancelDictation(silent: false)
+            case .handsFree:
+                // fn+Space latched: same recording, but tell the user Space took —
+                // the pill relabels and a pop confirms fn can be released.
+                guard self.isRecording else { return }
+                self.hud.show(.handsFree)
+                Sound.latch()
+            case .pasteLast:
+                guard let text = self.history.entries.first?.best else { return }
+                self.pasteWhenModifiersClear(text)
+            case .dismiss:
+                self.hud.dismiss()
             }
         }
         hotkey.start()
+    }
+
+    /// ⌃⌘V is still physically held when the pasteLast edge fires; a synthetic
+    /// ⌘V posted now would merge with those modifiers and stop being a paste.
+    /// Wait for release (max ~1s), then insert; give up to the clipboard.
+    func pasteWhenModifiersClear(_ text: String, tries: Int = 20) {
+        if NSEvent.modifierFlags.intersection([.command, .control, .option, .shift, .function]).isEmpty {
+            Inserter.insert(text)
+        } else if tries > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.pasteWhenModifiersClear(text, tries: tries - 1)
+            }
+        } else {
+            Inserter.copy(text)
+        }
     }
 
     /// Abort the in-flight dictation: stop the stream loop + recorder (discard
@@ -826,6 +853,7 @@ extension AppDelegate: NSMenuDelegate {
         menu.addItem(openHubItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Hold fn 🌐 to dictate", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "fn 🌐 + Space for hands-free", action: nil, keyEquivalent: ""))
         menu.addItem(.separator())
 
         if transcriber == nil {
@@ -877,7 +905,10 @@ extension AppDelegate: NSMenuDelegate {
         let entries = history.entries
         let pasteLast = NSMenuItem(title: "Paste Last Dictation",
                                     action: entries.isEmpty ? nil : #selector(pasteLastDictation),
-                                    keyEquivalent: "")
+                                    keyEquivalent: "v")
+        // Display only — the global ⌃⌘V lives in HotkeyMonitor (and is swallowed
+        // there before any menu could see it).
+        pasteLast.keyEquivalentModifierMask = [.control, .command]
         pasteLast.target = self
         menu.addItem(pasteLast)
 
