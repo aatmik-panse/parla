@@ -43,6 +43,9 @@ public struct Settings: Codable, Equatable {
     // dictation is verified to have landed safely in a field (see Inserter.restore
     // call sites in AppDelegate.finish for the exact conditions).
     public var restoreClipboard: Bool = false
+    // Core Audio UID of the input device to record from. nil ⇒ system default.
+    // A UID that no longer resolves (device unplugged) also falls back to default.
+    public var inputDeviceUID: String? = nil
     public init() {}
 
     // Tolerant decode: missing keys fall back to defaults so adding fields
@@ -61,6 +64,7 @@ public struct Settings: Codable, Equatable {
         hudIdleSize = try c.decodeIfPresent(String.self, forKey: .hudIdleSize) ?? hudIdleSize
         liveStreamingEnabled = try c.decodeIfPresent(Bool.self, forKey: .liveStreamingEnabled) ?? liveStreamingEnabled
         restoreClipboard = try c.decodeIfPresent(Bool.self, forKey: .restoreClipboard) ?? restoreClipboard
+        inputDeviceUID = try c.decodeIfPresent(String.self, forKey: .inputDeviceUID) ?? inputDeviceUID
     }
 }
 

@@ -65,6 +65,15 @@ struct GeneralPage: View {
                     .frame(width: 210)
                 }
                 HubDivider()
+                HubRow("Microphone", detail: "Input device to record from") {
+                    Picker("", selection: optBinding($model.settings.inputDeviceUID)) {
+                        Text("System Default").tag("")
+                        ForEach(micOptions, id: \.uid) { Text($0.name).tag($0.uid) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 210)
+                }
+                HubDivider()
                 HubRow("Settings file", detail: "Everything here is stored in settings.json") {
                     Button("Open File") { model.onOpenSettingsFile() }
                         .buttonStyle(HubButtonStyle())
@@ -86,6 +95,17 @@ struct GeneralPage: View {
             }
         }
         .onReceive(permissionTick) { _ in model.refreshPermissions() }
+    }
+
+    /// Live input devices, plus the saved device if it's currently unplugged —
+    /// so the picker still shows the user's choice instead of blanking.
+    private var micOptions: [AudioRecorder.InputDevice] {
+        var devices = AudioRecorder.availableInputs()
+        if let uid = model.settings.inputDeviceUID, !uid.isEmpty,
+           !devices.contains(where: { $0.uid == uid }) {
+            devices.append(.init(uid: uid, name: "Unavailable device"))
+        }
+        return devices
     }
 
     private func permissionRow(_ name: String, granted: Bool, pane: String,

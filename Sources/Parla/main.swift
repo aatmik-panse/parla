@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let s = self.store.load()
             self.hud.idleBarSize = HUD.idleSize(s.hudIdleSize)
             self.hud.showAlways = s.showHudAlways
+            self.recorder.inputDeviceUID = s.inputDeviceUID
         }
         m.modelLoaded = transcriber != nil
         return m
@@ -82,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let launchSettings = store.load()
         hud.idleBarSize = HUD.idleSize(launchSettings.hudIdleSize)
         hud.showAlways = launchSettings.showHudAlways
+        recorder.inputDeviceUID = launchSettings.inputDeviceUID
 
         recorder.onLevel = { [weak self] level in
             DispatchQueue.main.async { self?.hud.push(level: level) }
@@ -113,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         NSLog("Parla mic start failed: \(error)"); return
                     }
                     self.isRecording = true
-                    self.setStatus("🔴"); self.hud.show(.listening(command: true)); Sound.start()
+                    self.showRecording(); self.hud.show(.listening(command: true)); Sound.start()
                     return
                 }
                 self.commandMode = false
@@ -125,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.settings = settings
                 self.hud.idleBarSize = HUD.idleSize(settings.hudIdleSize)
                 self.hud.showAlways = settings.showHudAlways
+                self.recorder.inputDeviceUID = settings.inputDeviceUID
                 if let url = cleanupWarmURL(
                     settings: settings, env: ProcessInfo.processInfo.environment) {
                     var request = URLRequest(url: url)
@@ -136,7 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.isRecording = true
                 // typed is NOT reset here: a still-queued finish from the previous
                 // dictation must see it to erase that dictation's live text.
-                do { try self.recorder.start(); self.setStatus("🔴"); self.hud.show(.listening(command: false)); Sound.start() }
+                do { try self.recorder.start(); self.showRecording(); self.hud.show(.listening(command: false)); Sound.start() }
                 catch {
                     self.setStatus("⚠️"); self.hud.show(.error("Mic failed"))
                     NSLog("Parla mic start failed: \(error)")
@@ -719,7 +722,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // Text/emoji states (🔴 recording, … transcribing, ⚠️ error, ⬇️% download) clear
+    /// Recording state: keep the logo glyph (the HUD pill already shows the live
+    /// recording state); 🔴 only as the unbundled `swift run` fallback.
+    func showRecording() {
+        if let icon = Self.menuBarIcon {
+            statusItem.button?.title = ""
+            statusItem.button?.image = icon
+        } else {
+            setStatus("🔴")
+        }
+    }
+
+    // Text/emoji states (… transcribing, ⚠️ error, ⬇️% download) clear
     // any logo image first so they don't render side by side.
     func setStatus(_ s: String) {
         statusItem.button?.image = nil
@@ -844,6 +858,8 @@ extension AppDelegate: NSMenuDelegate {
         if !axGranted { menu.addItem(permissionItem(name: "Accessibility", pane: "Privacy_Accessibility")) }
         if !micGranted || !axGranted { menu.addItem(.separator()) }
 
+        addMicrophoneItem(to: menu)
+
         let launch = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launch.target = self
         launch.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -931,6 +947,40 @@ extension AppDelegate: NSMenuDelegate {
     /// worst case the text is still there to paste by hand.
     private func insertFromMenu(_ text: String) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { Inserter.insert(text) }
+    }
+
+    /// "Microphone" submenu: "System Default" + each input device, a checkmark
+    /// on the current selection. Empty representedObject ⇒ clear to default.
+    private func addMicrophoneItem(to menu: NSMenu) {
+        let selected = store.load().inputDeviceUID
+        let mic = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+
+        let def = NSMenuItem(title: "System Default", action: #selector(selectMicrophone(_:)), keyEquivalent: "")
+        def.target = self
+        def.representedObject = ""
+        def.state = selected == nil ? .on : .off
+        sub.addItem(def)
+        sub.addItem(.separator())
+
+        for device in AudioRecorder.availableInputs() {
+            let item = NSMenuItem(title: device.name, action: #selector(selectMicrophone(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = device.uid
+            item.state = device.uid == selected ? .on : .off
+            sub.addItem(item)
+        }
+        mic.submenu = sub
+        menu.addItem(mic)
+    }
+
+    @objc func selectMicrophone(_ sender: NSMenuItem) {
+        guard store.lastError == nil else { return } // never clobber a file being hand-fixed
+        let uid = sender.representedObject as? String
+        var s = store.load()
+        s.inputDeviceUID = (uid?.isEmpty ?? true) ? nil : uid
+        try? store.save(s)
+        recorder.inputDeviceUID = s.inputDeviceUID
     }
 
     private func permissionItem(name: String, pane: String) -> NSMenuItem {

@@ -101,6 +101,20 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(on.restoreClipboard)
     }
 
+    func testInputDeviceUIDDefaultNil() {
+        XCTAssertNil(Settings().inputDeviceUID)
+    }
+
+    func testInputDeviceUIDTolerantDecodeAndRoundTrip() throws {
+        let missing = try JSONDecoder().decode(Settings.self, from: Data(#"{"dictionary":["X"]}"#.utf8))
+        XCTAssertNil(missing.inputDeviceUID)
+        let store = tempStore()
+        var s = Settings()
+        s.inputDeviceUID = "AppleUSBAudioEngine:Blue:Yeti:1"
+        try store.save(s)
+        XCTAssertEqual(store.load().inputDeviceUID, s.inputDeviceUID)
+    }
+
     func testCleanupBlockRoundTrip() throws {
         let store = tempStore()
         var s = Settings()
