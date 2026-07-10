@@ -84,14 +84,28 @@ final class HotkeyTests: XCTestCase {
 
     // MARK: hands-free (fn+Space)
 
-    func testHandsFreeLatchSurvivesFnReleaseAndStops() {
+    func testHandsFreeLatchSurvivesFnReleaseAndFnStops() {
         var out: [HotkeyMonitor.Edge] = []
         let m = monitor(&out)
         m.handle(keyCode: 63, fnActive: true, at: 0)                       // fn down → push
         XCTAssertTrue(m.keyDown(keyCode: 49, fnActive: true, at: 0.1))     // fn+Space: latch, swallowed
         m.handle(keyCode: 63, fnActive: false, at: 0.3)                    // fn release: NO .up
         XCTAssertEqual(out, [.down(command: false), .handsFree])
-        XCTAssertTrue(m.keyDown(keyCode: 49, fnActive: true, at: 5))       // fn+Space again: stop
+        m.handle(keyCode: 63, fnActive: true, at: 5)                       // fn press: stop + transcribe
+        XCTAssertEqual(out, [.down(command: false), .handsFree, .up(short: false)])
+        XCTAssertTrue(m.keyDown(keyCode: 49, fnActive: true, at: 5.05))    // the chord's Space: swallowed, no restart
+        m.handle(keyCode: 63, fnActive: false, at: 5.1)                    // fn release: idle, no edges
+        XCTAssertEqual(out, [.down(command: false), .handsFree, .up(short: false)])
+    }
+
+    func testHandsFreeSpaceStopsWhenFnHeldThroughout() {
+        // fn never released after the latch: no fn-down stop can fire, so the
+        // second fn+Space must stop it.
+        var out: [HotkeyMonitor.Edge] = []
+        let m = monitor(&out)
+        m.handle(keyCode: 63, fnActive: true, at: 0)
+        _ = m.keyDown(keyCode: 49, fnActive: true, at: 0.1)                // latch
+        XCTAssertTrue(m.keyDown(keyCode: 49, fnActive: true, at: 2))       // stop
         XCTAssertEqual(out, [.down(command: false), .handsFree, .up(short: false)])
     }
 
@@ -116,15 +130,14 @@ final class HotkeyTests: XCTestCase {
         XCTAssertEqual(out, [.down(command: false), .handsFree, .cancel])
     }
 
-    func testFnHeldThroughStopStartsFreshHandsFree() {
+    func testSpaceAfterStopWithFnStillHeldIsSwallowedNoOp() {
         var out: [HotkeyMonitor.Edge] = []
         let m = monitor(&out)
         m.handle(keyCode: 63, fnActive: true, at: 0)
         _ = m.keyDown(keyCode: 49, fnActive: true, at: 0.1)                // latch
         _ = m.keyDown(keyCode: 49, fnActive: true, at: 2)                  // stop (fn never released)
-        XCTAssertTrue(m.keyDown(keyCode: 49, fnActive: true, at: 3))       // start again from idle
-        XCTAssertEqual(out, [.down(command: false), .handsFree, .up(short: false),
-                             .down(command: false), .handsFree])
+        XCTAssertTrue(m.keyDown(keyCode: 49, fnActive: true, at: 3))       // swallowed, must NOT restart
+        XCTAssertEqual(out, [.down(command: false), .handsFree, .up(short: false)])
     }
 
     // MARK: esc + paste-last while idle

@@ -85,7 +85,7 @@ struct GeneralPage: View {
                     ShortcutPill(text: "fn 🌐")
                 }
                 HubDivider()
-                HubRow("Hands-free mode", detail: "Press to start and stop dictating") {
+                HubRow("Hands-free mode", detail: "Start while holding fn; press fn again to finish") {
                     ShortcutPill(text: "fn 🌐 + Space")
                 }
                 HubDivider()
