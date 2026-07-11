@@ -34,10 +34,17 @@ public struct OpenAICompatClient: CleanupProviding {
             struct Model: Decodable { let id: String }
             let data: [Model]
         }
-        guard let first = try JSONDecoder().decode(Models.self, from: data).data.first else {
-            throw CleanupError(description: "server lists no models")
+        let ids = try JSONDecoder().decode(Models.self, from: data).data.map(\.id)
+        // ponytail: keyword blocklist — /models carries no capability info, so
+        // skip the obvious non-chat families (Groq lists whisper first); probe
+        // with a tiny chat request if a provider ever names one innocently.
+        let nonChat = ["whisper", "tts", "embed", "guard", "moderation", "rerank", "audio", "orpheus"]
+        guard let first = ids.first(where: { id in
+            !nonChat.contains { id.lowercased().contains($0) }
+        }) else {
+            throw CleanupError(description: "no chat-capable model in server list — set one in Hub → AI Cleanup")
         }
-        return first.id
+        return first
     }
 
     public func clean(transcript: String, context: CleanupContext) async throws -> String {

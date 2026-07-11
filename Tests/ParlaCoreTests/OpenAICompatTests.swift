@@ -113,6 +113,32 @@ final class OpenAICompatTests: XCTestCase {
         }
     }
 
+    // Empty model ⇒ auto-pick must skip non-chat entries: Groq lists
+    // whisper-large-v3 first, which 400s on /chat/completions.
+    func testAutoPickSkipsNonChatModels() async throws {
+        let http = MockHTTP()
+        http.body = Data(
+            #"{"data":[{"id":"whisper-large-v3"},{"id":"playai-tts"},{"id":"llama-3.3-70b"}],"choices":[{"message":{"content":"ok"}}]}"#.utf8)
+        let client = OpenAICompatClient(baseURL: "http://x/v1", apiKey: "k", model: nil, http: http)
+        _ = try await client.clean(transcript: "x", context: ctx)
+        let json = try JSONSerialization.jsonObject(with: http.lastRequest!.httpBody!) as! [String: Any]
+        XCTAssertEqual(json["model"] as? String, "llama-3.3-70b")
+    }
+
+    func testAutoPickThrowsWhenOnlyNonChatModels() async {
+        let http = MockHTTP()
+        http.body = Data(#"{"data":[{"id":"whisper-large-v3"},{"id":"playai-tts"}]}"#.utf8)
+        let client = OpenAICompatClient(baseURL: "http://x/v1", apiKey: "k", model: nil, http: http)
+        do {
+            _ = try await client.clean(transcript: "x", context: ctx)
+            XCTFail("expected throw")
+        } catch let error as CleanupError {
+            XCTAssertTrue(error.description.contains("chat-capable"))
+        } catch {
+            XCTFail("unexpected error type: \(error)")
+        }
+    }
+
     func testStopFinishReasonSucceeds() async throws {
         let http = MockHTTP()
         http.body = Data(#"{"choices":[{"message":{"content":"Done."},"finish_reason":"stop"}]}"#.utf8)
