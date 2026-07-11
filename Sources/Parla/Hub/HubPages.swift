@@ -152,6 +152,9 @@ struct CleanupPage: View {
         } catch let error as CleanupError {
             if error.description.contains("required") { return "no base URL is set" }
             if error.description.contains("not a valid") { return "the base URL isn't a valid http(s) URL" }
+            if error.description.contains("unknown cleanup.provider") {
+                return "settings.json names an unknown provider"
+            }
             return "no API key is set"
         } catch {
             return "\(error)"

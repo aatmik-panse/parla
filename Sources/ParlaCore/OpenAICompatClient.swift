@@ -61,7 +61,8 @@ public struct OpenAICompatClient: CleanupProviding {
         req.timeoutInterval = 15
         let body: [String: Any] = [
             "model": modelID,
-            // max_tokens is deprecated at OpenAI and rejected by o-series/gpt-5-class models, while max_completion_tokens is unsupported by some local servers; omitting it works everywhere and response-side guards bound the damage.
+            // Modern OpenAI cap; max_tokens stays absent for o-series/gpt-5-class.
+            "max_completion_tokens": 4096,
             // Server-default sampling avoids o-series/gpt-5 temperature rejects; degenerate guard covers loops.
             "messages": [
                 ["role": "system", "content": PromptBuilder.system(context: context)],

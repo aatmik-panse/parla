@@ -493,6 +493,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSLog("Parla swap: stale generation, no swap")
                 return
             }
+            if case .field = landing, Inserter.focusTarget() == .secure {
+                // Same never-type-into-secure invariant as landing.
+                NSLog("Parla swap path: focus moved to secure field, no cleaned swap")
+                let secureHUD: HUD.State = cleanResult.failed ? .rawFallback
+                    : plan == nil ? .done
+                    : settings.historyEnabled ? .cleanedInHistory
+                    : .error("History off — cleanup discarded")
+                hud.show(secureHUD)
+                return
+            }
             switch landing {
             case .history:
                 // Nothing of ours in a field — history is the only durable landing.
@@ -600,15 +610,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         await MainActor.run {
-            let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-            // Resolve the actual keystroke target before applying terminal safety.
-            let result = TextRules.isTerminal(bundleID: bundleID)
-                ? TextRules.flattenForTerminal(transformed) : transformed
             // Park when we can't safely type; without history, discard honestly.
             let park = { (why: String) -> HUD.State in
                 if settings.historyEnabled {
                     NSLog("Parla transform: %@, saved to history", why)
-                    self.history.append(HistoryEntry(raw: result, cleaned: nil, appName: nil))
+                    self.history.append(HistoryEntry(raw: transformed, cleaned: nil, appName: nil))
                     return .savedToHistory
                 }
                 NSLog("Parla transform: %@, discarded (history off)", why)
@@ -631,6 +637,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // never type over new context.
             if Inserter.selectedText() == selection {
                 NSLog("Parla transform: selection intact, replacing")
+                let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                // Resolve terminal safety only for text actually being typed.
+                let result = TextRules.isTerminal(bundleID: bundleID)
+                    ? TextRules.flattenForTerminal(transformed) : transformed
                 Inserter.insert(result) // typing replaces the live selection
                 Sound.finish()
                 hud.show(.done)

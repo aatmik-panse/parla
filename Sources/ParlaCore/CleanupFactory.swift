@@ -16,25 +16,28 @@ private func openAICompatKey(settings: Settings, env: [String: String]) -> Strin
     return nil
 }
 
-/// Base URL usable for cleanup: parses, http(s) scheme, has a host. Anything
-/// else is misconfiguration — callers must refuse it up front, never hand it
-/// to a client that would build a request URL from it.
+/// Base URL usable for cleanup: parses, http(s) scheme, has a host, no query
+/// or fragment. Anything else is misconfiguration — callers must refuse it up
+/// front, never hand it to a client that would build a request URL from it.
 private func validBaseURL(_ raw: String?) -> URL? {
     guard let raw, !raw.isEmpty, let url = URL(string: raw),
-          ["http", "https"].contains(url.scheme?.lowercased()), url.host != nil else { return nil }
+          ["http", "https"].contains(url.scheme?.lowercased()), url.host != nil,
+          url.query == nil, url.fragment == nil else { return nil }
     return url
 }
 
 /// True when the user has set cleanup up at all — a key for anthropic, a
-/// non-empty baseURL for openai-compatible — even if that config is invalid.
+/// non-empty baseURL for openai-compatible, or an unknown provider value.
 /// Callers use this to tell "cleanup off" (skip the polish leg silently)
 /// from "cleanup broken" (attempt it and surface the failure as raw-fallback).
 public func cleanupIsConfigured(settings: Settings, env: [String: String]) -> Bool {
     switch settings.cleanup.provider {
     case "openai-compatible":
         return !(settings.cleanup.baseURL ?? "").isEmpty
-    default:
+    case "", "anthropic":
         return anthropicKey(settings: settings, env: env) != nil
+    default:
+        return true
     }
 }
 
@@ -45,9 +48,11 @@ public func cleanupWarmURL(settings: Settings, env: [String: String]) -> URL? {
     case "openai-compatible":
         guard let url = validBaseURL(c.baseURL) else { return nil }
         return url
-    default:
+    case "", "anthropic":
         guard anthropicKey(settings: settings, env: env) != nil else { return nil }
         return URL(string: "https://api.anthropic.com")
+    default:
+        return nil
     }
 }
 
@@ -68,12 +73,13 @@ public func makeCleanupClient(
             throw CleanupError(description: "cleanup.baseURL is not a valid http(s) URL: \(baseURL)")
         }
         // model optional: nil ⇒ the client asks the server for its first model
-        let model = (c.model?.isEmpty ?? true) ? nil : c.model
+        let trimmedModel = c.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = (trimmedModel?.isEmpty ?? true) ? nil : trimmedModel
         return OpenAICompatClient(
             baseURL: baseURL,
             apiKey: openAICompatKey(settings: settings, env: env),
             model: model, http: http)
-    default:  // "anthropic" or any unknown value
+    case "", "anthropic":
         guard let key = anthropicKey(settings: settings, env: env) else {
             throw CleanupError(description: "no API key (set ANTHROPIC_API_KEY or anthropicApiKey)")
         }
@@ -81,5 +87,8 @@ public func makeCleanupClient(
         let model = settings.cleanupModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? Settings().cleanupModel : settings.cleanupModel
         return CleanupClient(apiKey: key, model: model, http: http)
+    default:
+        throw CleanupError(
+            description: "unknown cleanup.provider '\(c.provider)' (valid: anthropic, openai-compatible)")
     }
 }

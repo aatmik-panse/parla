@@ -102,6 +102,15 @@ final class PipelineTests: XCTestCase {
         XCTAssertEqual(result.text, expansion)
     }
 
+    func testUnusedSnippetDoesNotRaiseAllowance() async {
+        let expansion = String(repeating: "x", count: 630)
+        let p = makePipeline(transcript: "hello", // base allowance 2*5 + 200 = 210
+                             snippets: ["cal one": expansion]) { _, _ in expansion }
+        let result = await p.clean(transcript: "hello")
+        XCTAssertEqual(result.text, "hello")
+        XCTAssertTrue(result.failed)
+    }
+
     // A bare quote pair sanitizes to nothing — success with empty text would
     // pass swapPlan's non-empty check upstream, so it must report failure here.
     func testSanitizedToEmptyFallsBackToRaw() async {

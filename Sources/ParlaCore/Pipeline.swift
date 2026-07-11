@@ -40,11 +40,16 @@ public struct Pipeline {
             }
             // ponytail: char-count ceiling against LLM repetition loops (same
             // failure class as the whisper loops guarded in Transcriber). Cleanup
-            // legitimately grows text a little (punctuation) and snippet expansions
-            // a lot, so allow 2x + 200 plus every configured expansion; upgrade to
-            // repeated-substring detection if a real cleanup ever trips this.
+            // legitimately grows text a little (punctuation) and triggered
+            // snippets a lot, so allow 2x + 200 plus matched expansions; upgrade
+            // to repeated-substring detection if a real cleanup ever trips this.
+            let rawLower = transcript.lowercased()
             let allowance = 2 * transcript.count + 200
-                + s.snippets.values.reduce(0) { $0 + $1.count }
+                + s.snippets.reduce(0) { total, snippet in
+                    guard !snippet.key.isEmpty else { return total }
+                    return rawLower.contains(snippet.key.lowercased())
+                        ? total + snippet.value.count : total
+                }
             if cleaned.count > allowance {
                 NSLog("Parla cleanup output degenerate (\(cleaned.count) chars for \(transcript.count)-char transcript), keeping raw transcript")
                 return (transcript, true)

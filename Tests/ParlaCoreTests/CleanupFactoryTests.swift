@@ -134,16 +134,23 @@ final class CleanupFactoryTests: XCTestCase {
         XCTAssertFalse(cleanupIsConfigured(
             settings: { var t = s; t.cleanup.baseURL = nil; return t }(),
             env: ["ANTHROPIC_API_KEY": "k"]))
+
+        s.cleanup.provider = "some-future-thing"
+        XCTAssertTrue(cleanupIsConfigured(settings: s, env: [:]))
     }
 
-    func testUnknownProviderTreatedAsAnthropic() async throws {
+    func testUnknownProviderFailsClosed() {
         var s = Settings()
         s.cleanup.provider = "some-future-thing"
         s.anthropicApiKey = "k"
-        let http = mock()
-        let client = try makeCleanupClient(settings: s, env: [:], http: http)
-        _ = try await client.clean(transcript: "x", context: ctx)
-        XCTAssertEqual(http.lastRequest?.url?.absoluteString, "https://api.anthropic.com/v1/messages")
+        XCTAssertThrowsError(try makeCleanupClient(settings: s, env: [:])) { error in
+            let message = "\(error)"
+            XCTAssertTrue(message.contains("some-future-thing"))
+            XCTAssertTrue(message.contains("anthropic"))
+            XCTAssertTrue(message.contains("openai-compatible"))
+        }
+        XCTAssertNil(cleanupWarmURL(settings: s, env: [:]))
+        XCTAssertTrue(cleanupIsConfigured(settings: s, env: [:]))
     }
 
     func testOpenAICompatUsesBearerAndEndpoint() async throws {
@@ -190,7 +197,10 @@ final class CleanupFactoryTests: XCTestCase {
         var s = Settings()
         s.cleanup.provider = "openai-compatible"
         s.cleanup.model = "m"
-        for bad in ["http://local host:1234", "ollama", "ftp://x/v1"] {
+        for bad in [
+            "http://local host:1234", "ollama", "ftp://x/v1",
+            "https://host/v1?tenant=x", "https://host/v1#frag",
+        ] {
             s.cleanup.baseURL = bad
             XCTAssertThrowsError(try makeCleanupClient(settings: s, env: [:]), bad) { error in
                 XCTAssertTrue("\(error)".lowercased().contains("baseurl"))
@@ -205,6 +215,7 @@ final class CleanupFactoryTests: XCTestCase {
         var s = Settings()
         s.cleanup.provider = "openai-compatible"
         s.cleanup.baseURL = "http://localhost:11434/v1"
+        s.cleanup.model = " \n\t "
         let http = MockHTTP()
         http.body = Data(
             #"{"data":[{"id":"llama3"},{"id":"other"}],"choices":[{"message":{"content":"ok"}}]}"#.utf8)
