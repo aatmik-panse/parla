@@ -122,9 +122,12 @@ public enum Inserter {
         var roleRef: CFTypeRef?
         let role = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef) == .success
             ? roleRef as? String : nil
-        // Password field: bail BEFORE any editable heuristic — a secure field is
-        // also settable/selectable, so it would otherwise classify as .editable.
-        if role == "AXSecureTextField" { return .secure }
+        var subroleRef: CFTypeRef?
+        let subrole = AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subroleRef) == .success
+            ? subroleRef as? String : nil
+        // Password field: standards report role AXTextField + subrole
+        // AXSecureTextField; bail BEFORE editable heuristics, which also match.
+        if role == "AXSecureTextField" || subrole == "AXSecureTextField" { return .secure }
         if let role, ["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"].contains(role) {
             return .editable
         }

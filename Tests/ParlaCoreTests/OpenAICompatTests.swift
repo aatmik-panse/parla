@@ -18,8 +18,8 @@ final class OpenAICompatTests: XCTestCase {
         XCTAssertEqual(req.value(forHTTPHeaderField: "content-type"), "application/json")
         let json = try JSONSerialization.jsonObject(with: req.httpBody!) as! [String: Any]
         XCTAssertEqual(json["model"] as? String, "gpt-4o")
-        XCTAssertEqual(json["max_tokens"] as? Int, 8192)
-        XCTAssertEqual(json["temperature"] as! Double, 0.2, accuracy: 0.0001)
+        XCTAssertEqual(json["max_tokens"] as? Int, 4096)
+        XCTAssertNil(json["temperature"])
         let messages = json["messages"] as! [[String: Any]]
         XCTAssertEqual(messages[0]["role"] as? String, "system")
         XCTAssertEqual(messages[0]["content"] as? String, PromptBuilder.system(context: ctx))

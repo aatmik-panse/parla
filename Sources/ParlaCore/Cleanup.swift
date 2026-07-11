@@ -140,7 +140,8 @@ public struct CleanupClient: CleanupProviding {
         req.timeoutInterval = 15
         let body: [String: Any] = [
             "model": model,
-            "max_tokens": 8192,
+            // Claude 3 family 400s above 4096; 4096 fits all, truncation falls back raw.
+            "max_tokens": 4096,
             "system": PromptBuilder.system(context: context),
             "messages": [[
                 "role": "user",
@@ -162,8 +163,13 @@ public struct CleanupClient: CleanupProviding {
             let stop_reason: String?
         }
         let decoded = try JSONDecoder().decode(Response.self, from: data)
-        guard decoded.stop_reason != "max_tokens" else {
-            throw CleanupError(description: "cleanup response truncated (stop_reason=max_tokens)")
+        switch decoded.stop_reason {
+        case let reason? where reason == "max_tokens" ||
+            reason == "model_context_window_exceeded" ||
+            reason == "refusal":
+            throw CleanupError(description: "cleanup response stopped (stop_reason=\(reason))")
+        default:
+            break
         }
         let text = decoded.content.filter { $0.type == "text" }
             .compactMap(\.text).joined()

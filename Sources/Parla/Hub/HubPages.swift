@@ -150,7 +150,8 @@ struct CleanupPage: View {
                                       env: ProcessInfo.processInfo.environment)
             return nil
         } catch let error as CleanupError {
-            if error.description.contains("baseURL") { return "no base URL is set" }
+            if error.description.contains("required") { return "no base URL is set" }
+            if error.description.contains("not a valid") { return "the base URL isn't a valid http(s) URL" }
             return "no API key is set"
         } catch {
             return "\(error)"
@@ -466,7 +467,7 @@ struct PrivacyPage: View {
                        detail: "Dictation is refused in secure fields — nothing is typed, stored, or sent to the cleanup model") { EmptyView() }
                 HubDivider()
                 HubRow("Cleanup sends text only",
-                       detail: "The transcript, your dictionary, snippets, and the frontmost app's name — never audio") { EmptyView() }
+                       detail: "The transcript (or your selected text for voice commands), your dictionary, snippets, and the frontmost app's name — never audio") { EmptyView() }
             }
         }
     }

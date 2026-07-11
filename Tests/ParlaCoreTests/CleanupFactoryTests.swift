@@ -27,6 +27,18 @@ final class CleanupFactoryTests: XCTestCase {
         XCTAssertEqual(json["model"] as? String, "claude-haiku-4-5")
     }
 
+    func testAnthropicEmptyModelUsesBuiltInDefault() async throws {
+        var s = Settings()
+        s.anthropicApiKey = "k"
+        s.cleanupModel = ""
+        let http = mock()
+        let client = try makeCleanupClient(settings: s, env: [:], http: http)
+        _ = try await client.clean(transcript: "x", context: ctx)
+
+        let json = try JSONSerialization.jsonObject(with: http.lastRequest!.httpBody!) as! [String: Any]
+        XCTAssertEqual(json["model"] as? String, Settings().cleanupModel)
+    }
+
     func testAnthropicEnvKeyBeatsLegacy() async throws {
         var s = Settings()
         s.anthropicApiKey = "legacy-key"

@@ -37,6 +37,13 @@ final class SettingsTests: XCTestCase {
         XCTAssertFalse(store.lastError!.contains("\n")) // trimmed to one line for menu display
     }
 
+    func testDirectoryFallsBackToDefaultsAndReportsError() throws {
+        let store = tempStore()
+        try FileManager.default.createDirectory(at: store.url, withIntermediateDirectories: true)
+        XCTAssertEqual(store.load(), Settings())
+        XCTAssertNotNil(store.lastError)
+    }
+
     func testErrorClearsOnNextGoodLoad() throws {
         let store = tempStore()
         try FileManager.default.createDirectory(

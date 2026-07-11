@@ -61,10 +61,8 @@ public struct OpenAICompatClient: CleanupProviding {
         req.timeoutInterval = 15
         let body: [String: Any] = [
             "model": modelID,
-            "max_tokens": 8192,
-            // 0.2: low enough to keep the cleanup faithful, non-zero to avoid
-            // greedy-decoding repetition loops on small local models.
-            "temperature": 0.2,
+            "max_tokens": 4096,
+            // Server-default sampling avoids o-series/gpt-5 temperature rejects; degenerate guard covers loops.
             "messages": [
                 ["role": "system", "content": PromptBuilder.system(context: context)],
                 ["role": "user",

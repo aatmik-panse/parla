@@ -67,7 +67,7 @@ public struct Settings: Codable, Equatable {
 
 public final class SettingsStore {
     public let url: URL
-    /// Set by load() when settings.json exists but failed to parse. nil means
+    /// Set by load() when settings.json exists but failed to load. nil means
     /// either no file (fine, defaults) or the last load succeeded.
     public private(set) var lastError: String?
 
@@ -79,8 +79,9 @@ public final class SettingsStore {
 
     public func load() -> Settings {
         lastError = nil
-        guard let data = try? Data(contentsOf: url) else { return Settings() } // no file: fine, defaults
+        guard FileManager.default.fileExists(atPath: url.path) else { return Settings() } // no file: fine, defaults
         do {
+            let data = try Data(contentsOf: url)
             return try JSONDecoder().decode(Settings.self, from: data)
         } catch {
             lastError = Self.hint(error)

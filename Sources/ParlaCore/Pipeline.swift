@@ -51,7 +51,7 @@ public struct Pipeline {
             }
             return (cleaned, false)
         } catch {
-            NSLog("Parla cleanup failed, keeping raw transcript: \(error)")
+            NSLog("%@", "Parla cleanup failed, keeping raw transcript: \(error)")
             return (transcript, true)
         }
     }

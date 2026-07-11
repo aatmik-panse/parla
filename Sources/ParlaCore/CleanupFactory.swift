@@ -77,6 +77,9 @@ public func makeCleanupClient(
         guard let key = anthropicKey(settings: settings, env: env) else {
             throw CleanupError(description: "no API key (set ANTHROPIC_API_KEY or anthropicApiKey)")
         }
-        return CleanupClient(apiKey: key, model: settings.cleanupModel, http: http)
+        // Hub placeholder implies cleared means the built-in default.
+        let model = settings.cleanupModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? Settings().cleanupModel : settings.cleanupModel
+        return CleanupClient(apiKey: key, model: model, http: http)
     }
 }
