@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Where the instant raw finalize landed — decides how the cleaned swap applies.
-    /// .history = nothing typed anywhere; the transcript lives only in history.
+    /// .history = nothing safely finalized in a field; history may retain it.
     enum Landing: Sendable { case field, history }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -120,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     do { try self.recorder.start() }
                     catch {
                         self.setStatus("⚠️"); self.hud.show(.error("Mic failed"))
-                        NSLog("Parla mic start failed: \(error)"); return
+                        NSLog("%@", "Parla mic start failed: \(error)"); return
                     }
                     self.isRecording = true
                     self.showRecording(); self.hud.show(.listening(command: true)); Sound.start()
@@ -148,12 +148,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // dictation must see it to erase that dictation's live text.
                 do { try self.recorder.start(); self.showRecording(); self.hud.show(.listening(command: false)); Sound.start() }
                 catch {
+                    self.isRecording = false
                     self.setStatus("⚠️"); self.hud.show(.error("Mic failed"))
-                    NSLog("Parla mic start failed: \(error)")
+                    NSLog("%@", "Parla mic start failed: \(error)")
                     return
                 }
-                // Focused field gets the final insert at fn-up; no focus is
-                // history-only (see finish).
+                // Focused field gets the final insert at fn-up; no focus never
+                // types into the void (see finish).
                 self.focus = Inserter.focusTarget()
                 // Password field: with no clipboard hand-off there is nothing
                 // safe to do with the transcript (never type into a secure
@@ -259,7 +260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// stays in history for another try.
     func pasteWhenModifiersClear(_ text: String, tries: Int = 20) {
         if NSEvent.modifierFlags.intersection([.command, .control, .option, .shift, .function]).isEmpty {
-            Inserter.insert(text)
+            insertStoredText(text)
         } else if tries > 0 {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 self.pasteWhenModifiersClear(text, tries: tries - 1)
@@ -267,6 +268,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             hud.show(.error("Release keys, then retry"))
         }
+    }
+
+    /// History can outlive its source app. Resolve the target at the keystroke,
+    /// then flatten terminal newlines so stored text cannot execute commands.
+    private func insertStoredText(_ text: String) {
+        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        Inserter.insert(TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(text) : text)
     }
 
     /// Abort the in-flight dictation: stop the stream loop + recorder (discard
@@ -414,7 +422,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // cleanTask the raw transcript IS final — land the terminal HUD
             // state directly, no interstitial that nothing will ever resolve.
             let fieldHUD: HUD.State = cleanTask != nil ? .polishing : .done
-            let historyHUD: HUD.State = cleanTask != nil ? .polishing : .savedToHistory
+            let historyHUD: HUD.State = cleanTask != nil ? .polishing
+                : settings.historyEnabled ? .savedToHistory : .error("History off — text discarded")
             switch (live, focus) {
             case (_, .secure):
                 // Defensive: secure fields are refused at fn-down. Never type,
@@ -440,8 +449,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSLog("Parla finish path: streamed text already final")
                 } else {
                     // Can't prove the field still ends with our streamed text —
-                    // leave it in place; the transcript is in history.
-                    NSLog("Parla finish path: unverified, history only")
+                    // leave it in place; history retains the final when enabled.
+                    NSLog("Parla finish path: unverified, no safe finalize")
                     hud.show(historyHUD)
                     return .history
                 }
@@ -453,8 +462,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 hud.show(fieldHUD)
                 return .field
             case (false, .none):
-                // Nothing focused: never type into the void — history only.
-                NSLog("Parla finish path: no focus, history only")
+                // Nothing focused: never type into the void; history may retain it.
+                NSLog("Parla finish path: no focus, no insertion")
                 hud.show(historyHUD)
                 return .history
             }
@@ -464,8 +473,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // cleanTask is nil for secure fields (unreachable here — they returned
         // nil landing above), when cleanup is unconfigured, and when the cloud
-        // gate saw a transient secure focus: the raw transcript is final,
-        // record it and stop — no polish, no swap.
+        // gate saw a transient secure focus: the raw transcript is final;
+        // retain it when history is enabled, then stop — no polish, no swap.
         guard let cleanTask else {
             if settings.historyEnabled {
                 let entry = HistoryEntry(raw: raw, cleaned: nil, appName: appName)
@@ -486,15 +495,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let plan = LiveTyper.swapPlan(raw: insertText, cleaned: cleaned)
             guard gen == self.generation else {
                 // A newer dictation owns the field and HUD — no keystrokes, no
-                // HUD. The cleaned text is still recorded in history below.
-                NSLog("Parla swap: stale generation, history only")
+                // HUD. History still records the result below when enabled.
+                NSLog("Parla swap: stale generation, no swap")
                 return
             }
             switch landing {
             case .history:
-                // Nothing of ours in a field — the transcript (and its polish)
-                // live in history, reachable via ⌃⌘V or the Hub.
-                hud.show(cleanResult.failed ? .rawFallback : .savedToHistory)
+                // Nothing of ours in a field — history is the only durable landing.
+                hud.show(settings.historyEnabled
+                    ? (cleanResult.failed ? .rawFallback : .savedToHistory)
+                    : .error("History off — text discarded"))
             case .field:
                 guard let plan else { // polish was a no-op: either cleanup failed, or the LLM agreed raw was fine
                     hud.show(cleanResult.failed ? .rawFallback : .done)
@@ -507,9 +517,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     hud.show(.done)
                 } else {
                     // AX can't prove the field still ends with our text — leave
-                    // the raw alone; the cleaned version is in history.
-                    NSLog("Parla swap path: unverified, cleaned to history")
-                    hud.show(.cleanedInHistory)
+                    // the raw alone; history retains the cleaned version when enabled.
+                    NSLog("Parla swap path: unverified, no cleaned swap")
+                    hud.show(settings.historyEnabled ? .cleanedInHistory
+                        : .error("History off — cleanup discarded"))
                 }
             }
         }
@@ -526,8 +537,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Command mode: transcribe the spoken instruction on-device, transform the
     /// selection captured at fn-down via the cleanup LLM, and replace the live
-    /// selection if it's still intact — else park the result in history. Runs
-    /// on the processTask chain like finish().
+    /// selection if it's still intact — else park it when history is enabled.
+    /// Runs on the processTask chain like finish().
     func transform(samples: [Float], selection: String, gen: Int, bundleID: String?) async {
         let hud = self.hud
         defer {
@@ -577,7 +588,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .clean(transcript: instruction, context: ctx)
             transformed = CleanupSanitizer.sanitize(out)
         } catch {
-            NSLog("Parla transform failed: \(error)")
+            NSLog("%@", "Parla transform failed: \(error)")
             DispatchQueue.main.async { hud.show(.error("Transform failed")) }
             return
         }
@@ -586,22 +597,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { hud.show(.error("Transform failed")) }
             return
         }
+        // ponytail: generous expansion ceiling; add repeated-substring detection
+        // if legitimate transforms ever need more than 6× the source.
+        let lengthCeiling = max(2000, 6 * selection.count)
+        guard transformed.count <= lengthCeiling else {
+            NSLog("Parla transform: result over ceiling (%d > %d)", transformed.count, lengthCeiling)
+            DispatchQueue.main.async { hud.show(.error("Transform failed")) }
+            return
+        }
         // Terminal newline guard: a multi-line result pasted into a terminal would
         // run each line — same insertion-safety invariant as dictation.
         let result = TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(transformed) : transformed
 
         await MainActor.run {
-            // Park in history instead of typing when we can't safely land it —
-            // the only in-app place a result can survive without a clipboard.
-            let park = { (why: String) in
-                NSLog("Parla transform: %@, history fallback", why)
+            // Park when we can't safely type; without history, discard honestly.
+            let park = { (why: String) -> HUD.State in
                 if settings.historyEnabled {
+                    NSLog("Parla transform: %@, saved to history", why)
                     self.history.append(HistoryEntry(raw: result, cleaned: nil, appName: nil))
+                    return .savedToHistory
                 }
+                NSLog("Parla transform: %@, discarded (history off)", why)
+                return .error("History off — text discarded")
             }
             guard gen == self.generation else {
                 // A newer dictation owns the field/HUD — no keystrokes.
-                park("stale generation")
+                _ = park("stale generation")
                 return
             }
             // Same insert-time re-check as finish(): focus may have moved into
@@ -609,8 +630,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // query its selection. The result derives from the user's own
             // (non-secure) selection, so parking it in history is safe.
             guard Inserter.focusTarget() != .secure else {
-                park("focus moved to secure field")
-                hud.show(.savedToHistory)
+                hud.show(park("focus moved to secure field"))
                 return
             }
             // Only replace if the selection is provably still ours; otherwise the
@@ -621,11 +641,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Sound.finish()
                 hud.show(.done)
             } else {
-                park("selection changed")
-                hud.show(.savedToHistory)
+                hud.show(park("selection changed"))
             }
         }
-        // ponytail: transforms only reach history on the fallback paths above —
+        // ponytail: transforms only attempt history on the fallback paths above —
         // a landed transform isn't a dictation, and the source text is the user's.
     }
 
@@ -910,7 +929,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         downloadTask = nil
         hubModel.downloadProgress = nil
         if let error {
-            NSLog("Parla model download failed: \(error)")
+            NSLog("%@", "Parla model download failed: \(error)")
             hud.show(.error("Model download failed"))
             showIdle()
             return
@@ -1045,7 +1064,7 @@ extension AppDelegate: NSMenuDelegate {
                 try SMAppService.mainApp.register()
             }
         } catch {
-            NSLog("Parla: launch-at-login toggle failed: \(error)")
+            NSLog("%@", "Parla: launch-at-login toggle failed: \(error)")
             hud.show(.error("Launch at Login failed"))
         }
     }
@@ -1054,7 +1073,7 @@ extension AppDelegate: NSMenuDelegate {
     /// the previous app can lag the click — typing too early hits nothing.
     /// Delay a beat; worst case the text is still in history to retry.
     private func insertFromMenu(_ text: String) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { Inserter.insert(text) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { self.insertStoredText(text) }
     }
 
     /// "Microphone" submenu: "System Default" + each input device, a checkmark

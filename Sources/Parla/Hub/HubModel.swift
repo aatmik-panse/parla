@@ -85,7 +85,7 @@ final class HubModel: ObservableObject {
             } else {
                 try SMAppService.mainApp.register()
             }
-        } catch { NSLog("Parla: launch-at-login toggle failed: \(error)") }
+        } catch { NSLog("%@", "Parla: launch-at-login toggle failed: \(error)") }
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
