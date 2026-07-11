@@ -61,7 +61,7 @@ public struct OpenAICompatClient: CleanupProviding {
         req.timeoutInterval = 15
         let body: [String: Any] = [
             "model": modelID,
-            "max_tokens": 4096,
+            // max_tokens is deprecated at OpenAI and rejected by o-series/gpt-5-class models, while max_completion_tokens is unsupported by some local servers; omitting it works everywhere and response-side guards bound the damage.
             // Server-default sampling avoids o-series/gpt-5 temperature rejects; degenerate guard covers loops.
             "messages": [
                 ["role": "system", "content": PromptBuilder.system(context: context)],
@@ -80,15 +80,21 @@ public struct OpenAICompatClient: CleanupProviding {
 
         struct Response: Decodable {
             struct Choice: Decodable {
-                struct Message: Decodable { let content: String? }
+                struct Message: Decodable { let content: String?; let refusal: String? }
                 let message: Message
                 let finish_reason: String?
             }
             let choices: [Choice]
         }
         let decoded = try JSONDecoder().decode(Response.self, from: data)
-        guard decoded.choices.first?.finish_reason != "length" else {
-            throw CleanupError(description: "cleanup response truncated (finish_reason=length)")
+        switch decoded.choices.first?.finish_reason {
+        case let reason? where reason == "length" || reason == "content_filter":
+            throw CleanupError(description: "cleanup response stopped (finish_reason=\(reason))")
+        default:
+            break
+        }
+        if let refusal = decoded.choices.first?.message.refusal, !refusal.isEmpty {
+            throw CleanupError(description: "cleanup response refused: \(refusal)")
         }
         let text = decoded.choices.first?.message.content ?? ""
         guard !text.isEmpty else { throw CleanupError(description: "empty response") }

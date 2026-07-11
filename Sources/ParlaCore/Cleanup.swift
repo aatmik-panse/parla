@@ -138,10 +138,11 @@ public struct CleanupClient: CleanupProviding {
         req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         req.setValue("application/json", forHTTPHeaderField: "content-type")
         req.timeoutInterval = 15
+        let maxTokens = context.selection == nil ? 4096 : 8192
         let body: [String: Any] = [
             "model": model,
-            // Claude 3 family 400s above 4096; 4096 fits all, truncation falls back raw.
-            "max_tokens": 4096,
+            // Legacy-model ceiling for dictation; transforms accept the legacy incompatibility for double headroom.
+            "max_tokens": maxTokens,
             "system": PromptBuilder.system(context: context),
             "messages": [[
                 "role": "user",

@@ -18,7 +18,7 @@ final class OpenAICompatTests: XCTestCase {
         XCTAssertEqual(req.value(forHTTPHeaderField: "content-type"), "application/json")
         let json = try JSONSerialization.jsonObject(with: req.httpBody!) as! [String: Any]
         XCTAssertEqual(json["model"] as? String, "gpt-4o")
-        XCTAssertEqual(json["max_tokens"] as? Int, 4096)
+        XCTAssertFalse(json.keys.contains("max_tokens"))
         XCTAssertNil(json["temperature"])
         let messages = json["messages"] as! [[String: Any]]
         XCTAssertEqual(messages[0]["role"] as? String, "system")
@@ -108,6 +108,34 @@ final class OpenAICompatTests: XCTestCase {
             XCTFail("expected throw")
         } catch let error as CleanupError {
             XCTAssertTrue(error.description.contains("length"))
+        } catch {
+            XCTFail("unexpected error type: \(error)")
+        }
+    }
+
+    func testContentFilterResponseThrows() async {
+        let http = MockHTTP()
+        http.body = Data(#"{"choices":[{"message":{"content":"partial"},"finish_reason":"content_filter"}]}"#.utf8)
+        let client = OpenAICompatClient(baseURL: "http://x/v1", apiKey: "k", model: "m", http: http)
+        do {
+            _ = try await client.clean(transcript: "x", context: ctx)
+            XCTFail("expected throw")
+        } catch let error as CleanupError {
+            XCTAssertTrue(error.description.contains("content_filter"))
+        } catch {
+            XCTFail("unexpected error type: \(error)")
+        }
+    }
+
+    func testRefusalResponseThrows() async {
+        let http = MockHTTP()
+        http.body = Data(#"{"choices":[{"message":{"content":"partial","refusal":"blocked"}}]}"#.utf8)
+        let client = OpenAICompatClient(baseURL: "http://x/v1", apiKey: "k", model: "m", http: http)
+        do {
+            _ = try await client.clean(transcript: "x", context: ctx)
+            XCTFail("expected throw")
+        } catch let error as CleanupError {
+            XCTAssertTrue(error.description.contains("blocked"))
         } catch {
             XCTFail("unexpected error type: \(error)")
         }

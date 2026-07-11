@@ -467,7 +467,7 @@ struct PrivacyPage: View {
                        detail: "Dictation is refused in secure fields — nothing is typed, stored, or sent to the cleanup model") { EmptyView() }
                 HubDivider()
                 HubRow("Cleanup sends text only",
-                       detail: "The transcript (or your selected text for voice commands), your dictionary, snippets, and the frontmost app's name — never audio") { EmptyView() }
+                       detail: "The transcript, the selected text for voice commands, your dictionary, snippets, and the frontmost app's name — never audio") { EmptyView() }
             }
         }
     }

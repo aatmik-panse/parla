@@ -154,7 +154,14 @@ public final class AudioRecorder {
             self.lock.unlock()
             self.onLevel?(AudioRecorder.rms(chunk))
         }
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            // A failed start must leave the recorder restartable.
+            input.removeTap(onBus: 0)
+            engine.stop()
+            throw error
+        }
     }
 
     /// Copy of the samples captured so far, under the lock. Safe to call

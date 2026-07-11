@@ -33,7 +33,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var focus = Inserter.FocusTarget.none
     var typed = ""
     // Cleanup context is latched at fn-down and read at fn-up like liveTyping/focus.
-    var bundleID: String?
     var appName: String?
     var settings = Settings()
     // Command mode (⇧+fn): transform the selection captured at fn-down instead of
@@ -128,7 +127,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 self.commandMode = false
                 let frontApp = NSWorkspace.shared.frontmostApplication
-                self.bundleID = frontApp?.bundleIdentifier
                 self.appName = frontApp?.localizedName
                 let settings = self.store.load()
                 self.settings = settings
@@ -206,11 +204,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // on the processTask chain (whisper ctx not reentrant).
                     let selection = self.commandSelection
                     let gen = self.generation
-                    let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
                     self.setStatus("…"); self.hud.show(.transcribing)
                     self.processTask = Task { [prev = self.processTask] in
                         await prev?.value
-                        await self.transform(samples: samples, selection: selection, gen: gen, bundleID: bundleID)
+                        await self.transform(samples: samples, selection: selection, gen: gen)
                     }
                     return
                 }
@@ -219,7 +216,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let live = self.liveTyping
                 let focus = self.focus
                 let gen = self.generation
-                let bundleID = self.bundleID
                 let appName = self.appName
                 let settings = self.settings
                 self.setStatus("…")
@@ -229,7 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // dictation order.
                 self.processTask = Task { [prev = self.processTask] in
                     await prev?.value
-                    await self.finish(samples: samples, live: live, focus: focus, gen: gen, bundleID: bundleID,
+                    await self.finish(samples: samples, live: live, focus: focus, gen: gen,
                                       appName: appName, settings: settings)
                 }
             case .cancel:
@@ -305,7 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func finish(samples: [Float], live: Bool, focus: Inserter.FocusTarget, gen: Int,
-                bundleID: String?, appName: String?, settings: Settings) async {
+                appName: String?, settings: Settings) async {
         let hud = self.hud // bind so main-queue hops don't capture non-Sendable self
         defer {
             DispatchQueue.main.async {
@@ -373,56 +369,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Terminal newline guard: flatten before ANY insertion so a multi-line
-        // transcript can't run each line as a command. insertText is what actually
-        // lands in the field — the async swap below must diff against IT, not raw.
-        let insertText = TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(raw) : raw
-
         // Cleanup intent, decided once from the latched settings. Configured
         // means the user set a key (anthropic) or a baseURL (openai-compatible)
         // even if it's invalid — a broken config must still attempt and surface
         // raw-fallback, while keyless (a supported config) skips the polish leg
         // instead of flashing "polishing…" into a guaranteed "failed" toast.
-        let cleanupConfigured = cleanupIsConfigured(
+        let willPolish = cleanupIsConfigured(
             settings: settings, env: ProcessInfo.processInfo.environment)
-
-        // Cloud gate: if focus already moved into a password field, never even
-        // start the cleanup POST. The landing block re-checks before keystrokes;
-        // this earlier check keeps the transcript off the network too.
-        let secureNow = await MainActor.run { Inserter.focusTarget() == .secure }
-
-        let cleanTask: Task<(text: String, failed: Bool), Never>?
-        if focus != .secure, !secureNow, cleanupConfigured {
-            cleanTask = Task { await pipeline.clean(transcript: raw) }
-        } else {
-            cleanTask = nil
-        }
 
         // Instant finalize: land the raw transcript NOW; the LLM polish swaps in
         // behind it without blocking the user. nil = dropped (secure field).
-        let landing: Landing? = await MainActor.run {
+        let landingResult: (landing: Landing, insertText: String, bundleID: String?)? = await MainActor.run {
             let typedCount = self.typed.count // graphemes streamed live so far
             defer { self.typed = "" }
             // `focus` was latched at fn-down; re-check BEFORE the transcript is
             // logged so a password dictated into a moved-into secure field never
             // reaches unified logging. Same semantics as the (_, .secure) arm
-            // below: never type, never log, never store — drop it (cancel is
-            // best-effort, the cleanup call may already be in flight).
+            // below: never type, never log, never store — drop it.
             if Inserter.focusTarget() == .secure {
                 NSLog("Parla finish path: focus moved to secure field, dropped")
-                cleanTask?.cancel()
                 hud.show(.error("Not supported in password fields"))
                 return nil
             }
+            let landingBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            // Flatten against the actual keystroke target. The cleaned swap must
+            // use this same bundle ID so both sides of its diff agree.
+            let insertText = TextRules.isTerminal(bundleID: landingBundleID)
+                ? TextRules.flattenForTerminal(raw) : raw
             // Never log the transcript for a secure field — it's plausibly a
             // password, and unified logging is readable in Console.
             NSLog("Parla finish: raw=%@ live=%d focus=%d typed=%d",
                   focus == .secure ? "<secure>" : insertText, live ? 1 : 0, focus == .none ? 0 : 1, typedCount)
-            // Show "polishing…" only when a polish is actually coming; with no
-            // cleanTask the raw transcript IS final — land the terminal HUD
+            // Show "polishing…" only when a polish is actually coming; without
+            // polish the raw transcript IS final — land the terminal HUD
             // state directly, no interstitial that nothing will ever resolve.
-            let fieldHUD: HUD.State = cleanTask != nil ? .polishing : .done
-            let historyHUD: HUD.State = cleanTask != nil ? .polishing
+            let fieldHUD: HUD.State = willPolish ? .polishing : .done
+            let historyHUD: HUD.State = willPolish ? .polishing
                 : settings.historyEnabled ? .savedToHistory : .error("History off — text discarded")
             switch (live, focus) {
             case (_, .secure):
@@ -452,29 +434,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // leave it in place; history retains the final when enabled.
                     NSLog("Parla finish path: unverified, no safe finalize")
                     hud.show(historyHUD)
-                    return .history
+                    return (.history, insertText, landingBundleID)
                 }
                 hud.show(fieldHUD)
-                return .field
+                return (.field, insertText, landingBundleID)
             case (false, .unknown), (false, .editable):
                 NSLog("Parla finish path: focused insert")
                 Inserter.insert(insertText) // insert at cursor
                 hud.show(fieldHUD)
-                return .field
+                return (.field, insertText, landingBundleID)
             case (false, .none):
                 // Nothing focused: never type into the void; history may retain it.
                 NSLog("Parla finish path: no focus, no insertion")
                 hud.show(historyHUD)
-                return .history
+                return (.history, insertText, landingBundleID)
             }
         }
-        guard let landing else { return } // dropped: no sound, no polish, no history
-        Sound.finish() // raw transcript landed — the user-visible finalize moment
+        guard let landingResult else { return } // dropped: no sound, no polish, no history
+        let landing = landingResult.landing
+        let insertText = landingResult.insertText
 
-        // cleanTask is nil for secure fields (unreachable here — they returned
-        // nil landing above), when cleanup is unconfigured, and when the cloud
-        // gate saw a transient secure focus: the raw transcript is final;
-        // retain it when history is enabled, then stop — no polish, no swap.
+        // The POST starts after landing keystrokes; polish is async anyway.
+        let cleanTask: Task<(text: String, failed: Bool), Never>? = willPolish
+            ? Task { await pipeline.clean(transcript: raw) } : nil
+        switch landing {
+        case .field:
+            Sound.finish()
+        case .history where settings.historyEnabled:
+            Sound.finish()
+        case .history:
+            break
+        }
+
+        // With cleanup unconfigured, the raw transcript is final; retain it when
+        // history is enabled, then stop — no polish, no swap.
         guard let cleanTask else {
             if settings.historyEnabled {
                 let entry = HistoryEntry(raw: raw, cleaned: nil, appName: appName)
@@ -490,7 +483,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Same terminal guard on the cleaned text — it replaces insertText in the
         // field, so it must be flattened too, and the plan must diff flattened vs
         // flattened (insertText) or the erase/verify counts won't match the field.
-        let cleaned = TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(cleanResult.text) : cleanResult.text
+        let cleaned = TextRules.isTerminal(bundleID: landingResult.bundleID)
+            ? TextRules.flattenForTerminal(cleanResult.text) : cleanResult.text
         await MainActor.run {
             let plan = LiveTyper.swapPlan(raw: insertText, cleaned: cleaned)
             guard gen == self.generation else {
@@ -539,7 +533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// selection captured at fn-down via the cleanup LLM, and replace the live
     /// selection if it's still intact — else park it when history is enabled.
     /// Runs on the processTask chain like finish().
-    func transform(samples: [Float], selection: String, gen: Int, bundleID: String?) async {
+    func transform(samples: [Float], selection: String, gen: Int) async {
         let hud = self.hud
         defer {
             DispatchQueue.main.async {
@@ -605,11 +599,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { hud.show(.error("Transform failed")) }
             return
         }
-        // Terminal newline guard: a multi-line result pasted into a terminal would
-        // run each line — same insertion-safety invariant as dictation.
-        let result = TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(transformed) : transformed
-
         await MainActor.run {
+            let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            // Resolve the actual keystroke target before applying terminal safety.
+            let result = TextRules.isTerminal(bundleID: bundleID)
+                ? TextRules.flattenForTerminal(transformed) : transformed
             // Park when we can't safely type; without history, discard honestly.
             let park = { (why: String) -> HUD.State in
                 if settings.historyEnabled {
@@ -633,8 +627,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 hud.show(park("focus moved to secure field"))
                 return
             }
-            // Only replace if the selection is provably still ours; otherwise the
-            // user clicked away — never type over new context.
+            // Only replace if the selection is textually unchanged; otherwise
+            // never type over new context.
             if Inserter.selectedText() == selection {
                 NSLog("Parla transform: selection intact, replacing")
                 Inserter.insert(result) // typing replaces the live selection
