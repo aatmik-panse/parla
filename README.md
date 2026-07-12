@@ -15,9 +15,27 @@ from source:
 ```sh
 git clone https://github.com/wannabeepolymath/parla.git && cd parla
 scripts/download-model.sh          # fetch a whisper model (default: base.en; also takes tiny.en / large-v3-turbo)
-export ANTHROPIC_API_KEY=sk-ant-…  # optional; used for transcript cleanup
+export ANTHROPIC_API_KEY=sk-ant-…  # optional; used for transcript cleanup (Groq/OpenAI/Ollama: see Cleanup providers)
 scripts/make-app.sh                # swift build -c release + bundle Parla.app
 open Parla.app
+```
+
+**Prefer Groq (or any OpenAI-compatible provider)?** Skip the Anthropic key,
+add a `cleanup` block to `settings.json` (see [Cleanup providers](#cleanup-providers)),
+and export that provider's key instead:
+
+```sh
+export GROQ_API_KEY=gsk_…            # instead of ANTHROPIC_API_KEY
+```
+
+```json
+// ~/Library/Application Support/Parla/settings.json
+"cleanup": {
+  "provider": "openai-compatible",
+  "baseURL": "https://api.groq.com/openai/v1",
+  "model": "openai/gpt-oss-120b",
+  "apiKeyEnvVar": "GROQ_API_KEY"
+}
 ```
 
 Skipping the first step is fine — the menu bar offers a one-click
@@ -131,7 +149,7 @@ Cleanup defaults to **Anthropic** (the `cleanupModel` + `anthropicApiKey`/`ANTHR
 
 - `cleanup.provider` — `"anthropic"` (default) or `"openai-compatible"`.
 - `cleanup.baseURL` — required for `openai-compatible`; the API root (Parla POSTs to `{baseURL}/chat/completions`).
-- `cleanup.model` — model id; empty uses the server's first model.
+- `cleanup.model` — model id; empty uses the server's first model. The Hub suggests `openai/gpt-oss-120b`.
 - `cleanup.apiKeyEnvVar` — name of the env var holding the key (takes precedence over `cleanup.apiKey`).
 - `cleanup.apiKey` — inline key fallback. Omit both for keyless local servers (Ollama).
 
@@ -143,7 +161,7 @@ The `cleanup.model`/`cleanup.apiKeyEnvVar`/`cleanup.apiKey` fields apply to `ope
 "cleanup": {
   "provider": "openai-compatible",
   "baseURL": "https://api.groq.com/openai/v1",
-  "model": "llama-3.3-70b-versatile",
+  "model": "openai/gpt-oss-120b",
   "apiKeyEnvVar": "GROQ_API_KEY"
 }
 ```

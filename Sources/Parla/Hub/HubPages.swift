@@ -203,7 +203,7 @@ struct CleanupPage: View {
                     }
                     HubDivider()
                     HubRow("Model", detail: "Optional — empty uses the server's first model") {
-                        TextField("server default",
+                        TextField("openai/gpt-oss-120b",
                                   text: optBinding($model.settings.cleanup.model))
                             .hubField().frame(width: 260)
                     }
