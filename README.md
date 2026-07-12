@@ -8,9 +8,12 @@ place (see Command mode below).
 
 ## Running it
 
-Prerequisites: macOS 13.3+ and Xcode (or the Command Line Tools) with Swift 5.9+.
+Prerequisites: macOS 13.3+ and Xcode (or the Command Line Tools) with Swift
+5.9+. There's no Homebrew formula/cask or prebuilt binary — clone and build
+from source:
 
 ```sh
+git clone https://github.com/wannabeepolymath/parla.git && cd parla
 scripts/download-model.sh          # fetch a whisper model (default: base.en; also takes tiny.en / large-v3-turbo)
 export ANTHROPIC_API_KEY=sk-ant-…  # optional; used for transcript cleanup
 scripts/make-app.sh                # swift build -c release + bundle Parla.app
