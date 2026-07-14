@@ -882,6 +882,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(store.url)
     }
 
+    @objc func reportIssue() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/wannabeepolymath/parla/issues/new")!)
+    }
+
     @objc func openPrivacyPane(_ sender: NSMenuItem) {
         guard let pane = sender.representedObject as? String,
               let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")
@@ -993,6 +997,11 @@ extension AppDelegate: NSMenuDelegate {
         launch.target = self
         launch.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(launch)
+        menu.addItem(.separator())
+
+        let report = NSMenuItem(title: "Report a Bug or Feature…", action: #selector(reportIssue), keyEquivalent: "")
+        report.target = self
+        menu.addItem(report)
         menu.addItem(.separator())
 
         menu.addItem(NSMenuItem(title: "Quit Parla", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
