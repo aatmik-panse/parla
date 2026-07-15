@@ -51,6 +51,17 @@ final class CleanupTests: XCTestCase {
         XCTAssertEqual(PromptBuilder.user(transcript: "um hi", context: ctx), "um hi")
     }
 
+    func testSanitizerOnlyStripsQuotesThatWrapWholeString() {
+        XCTAssertEqual(CleanupSanitizer.sanitize("\"hello there\""), "hello there")
+        XCTAssertEqual(CleanupSanitizer.sanitize("\u{201C}hello\u{201D}"), "hello")
+        XCTAssertEqual(CleanupSanitizer.sanitize("\"Hello,\" she said. \"Goodbye.\""),
+                       "\"Hello,\" she said. \"Goodbye.\"")
+        XCTAssertEqual(CleanupSanitizer.sanitize("\u{201C}a\u{201D} and \u{201C}b\u{201D}"),
+                       "\u{201C}a\u{201D} and \u{201C}b\u{201D}")
+        XCTAssertEqual(CleanupSanitizer.sanitize("'Hi,' he said. 'Bye.'"),
+                       "'Hi,' he said. 'Bye.'")
+    }
+
     // A selection that tries to escape the <text> region must stay in the user
     // message; the system prompt never carries untrusted selection text.
     func testInjectionSelectionStaysOutOfSystemPrompt() {

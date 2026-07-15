@@ -102,6 +102,16 @@ final class PipelineTests: XCTestCase {
         XCTAssertEqual(result.text, expansion)
     }
 
+    func testRepeatedSnippetExpansionsRaiseAllowancePerOccurrence() async {
+        let expansion = String(repeating: "x", count: 260)
+        let cleaned = expansion + expansion
+        let p = makePipeline(transcript: "cal one and cal one",
+                             snippets: ["cal one": expansion]) { _, _ in cleaned }
+        let result = await p.clean(transcript: "cal one and cal one")
+        XCTAssertNil(result.failure)
+        XCTAssertEqual(result.text, cleaned)
+    }
+
     func testUnusedSnippetDoesNotRaiseAllowance() async {
         let expansion = String(repeating: "x", count: 630)
         let p = makePipeline(transcript: "hello", // base allowance 2*5 + 200 = 210

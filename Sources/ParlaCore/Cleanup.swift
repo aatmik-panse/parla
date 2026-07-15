@@ -140,8 +140,9 @@ public enum CleanupSanitizer {
             return trimmed
         }
         for (open, close) in pairs where first == open && last == close {
-            return String(trimmed.dropFirst().dropLast())
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let inner = trimmed.dropFirst().dropLast()
+            guard !inner.contains(open), !inner.contains(close) else { return trimmed }
+            return String(inner).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return trimmed
     }

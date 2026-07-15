@@ -81,7 +81,26 @@ public struct OpenAICompatClient: CleanupProviding {
 
         struct Response: Decodable {
             struct Choice: Decodable {
-                struct Message: Decodable { let content: String?; let refusal: String? }
+                struct Message: Decodable {
+                    struct Part: Decodable { let text: String? }
+
+                    let content: String?
+                    let refusal: String?
+
+                    enum CodingKeys: String, CodingKey { case content, refusal }
+
+                    init(from decoder: Decoder) throws {
+                        let c = try decoder.container(keyedBy: CodingKeys.self)
+                        refusal = try c.decodeIfPresent(String.self, forKey: .refusal)
+                        if let text = try? c.decodeIfPresent(String.self, forKey: .content) {
+                            content = text
+                            return
+                        }
+                        let parts = (try? c.decodeIfPresent([Part].self, forKey: .content)) ?? []
+                        let text = parts.compactMap(\.text).joined()
+                        content = text.isEmpty ? nil : text
+                    }
+                }
                 let message: Message
                 let finish_reason: String?
             }

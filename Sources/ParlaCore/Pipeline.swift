@@ -46,9 +46,15 @@ public struct Pipeline {
             let rawLower = transcript.lowercased()
             let allowance = 2 * transcript.count + 200
                 + s.snippets.reduce(0) { total, snippet in
-                    guard !snippet.key.isEmpty else { return total }
-                    return rawLower.contains(snippet.key.lowercased())
-                        ? total + snippet.value.count : total
+                    let key = snippet.key.lowercased()
+                    guard !key.isEmpty else { return total }
+                    var count = 0
+                    var start = rawLower.startIndex
+                    while let range = rawLower.range(of: key, range: start..<rawLower.endIndex) {
+                        count += 1
+                        start = range.upperBound
+                    }
+                    return total + snippet.value.count * count
                 }
             if cleaned.count > allowance {
                 NSLog("Parla cleanup output degenerate (\(cleaned.count) chars for \(transcript.count)-char transcript), keeping raw transcript")

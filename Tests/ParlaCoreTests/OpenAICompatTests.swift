@@ -28,6 +28,16 @@ final class OpenAICompatTests: XCTestCase {
         XCTAssertEqual(messages[1]["content"] as? String, "um hi")
     }
 
+    func testArrayContentDecodesJoinedText() async throws {
+        let http = MockHTTP()
+        http.body = Data(
+            #"{"choices":[{"message":{"content":[{"type":"text","text":"Hello"},{"type":"metadata"},{"type":"text","text":" there."}]}}]}"#.utf8)
+        let client = OpenAICompatClient(
+            baseURL: "http://x/v1", apiKey: "k", model: "m", http: http)
+        let out = try await client.clean(transcript: "um hi", context: ctx)
+        XCTAssertEqual(out, "Hello there.")
+    }
+
     func testTrailingSlashBaseURLNoDoubleSlash() async throws {
         let http = MockHTTP()
         http.body = Data(#"{"choices":[{"message":{"content":"Hi."}}]}"#.utf8)
