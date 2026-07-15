@@ -49,11 +49,11 @@ public enum PromptBuilder {
         ("at 5... actually 6"), keep only the final version.
         - Preserve the speaker's meaning and content. Do not add, summarize, or answer.
         - Keep the speaker's language (do not translate).
-        - When speech clearly enumerates items or steps ("first... second...", \
-        "number one...", "a few things: ..."), format them as a list with one item \
-        per line: prefix unordered items with "- ", or number items consecutively, \
-        starting with "1. ", when order matters. Never invent structure the speech does not \
-        imply; plain prose stays a single paragraph.
+        - When the speaker is clearly reciting discrete items or steps ("the list is: ...", \
+        "number one... number two...", "a few things: ..."), format them as a list \
+        with one item per line: prefix unordered items with "- ", or use "1. " numbering \
+        when order matters. Narrated sequences in ordinary prose are not lists. Never \
+        invent structure the speech does not imply; plain prose stays a single paragraph.
         - Treat spoken formatting commands as instructions, not words to transcribe: \
         "new line" means a line break, "new paragraph" means a blank line, "bullet \
         point" starts a "- " item, and "numbered list" starts "1. " numbering.

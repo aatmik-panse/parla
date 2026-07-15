@@ -270,7 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// then flatten terminal newlines so stored text cannot execute commands.
     private func insertStoredText(_ text: String) {
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        Inserter.insert(TextRules.isTerminal(bundleID: bundleID) ? TextRules.flattenForTerminal(text) : text)
+        Inserter.insert(TextRules.flattensNewlines(bundleID: bundleID) ? TextRules.flattenForTerminal(text) : text)
     }
 
     /// Abort the in-flight dictation: stop the stream loop + recorder (discard
@@ -639,7 +639,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSLog("Parla transform: selection intact, replacing")
                 let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
                 // Resolve terminal safety only for text actually being typed.
-                let result = TextRules.isTerminal(bundleID: bundleID)
+                let result = TextRules.flattensNewlines(bundleID: bundleID)
                     ? TextRules.flattenForTerminal(transformed) : transformed
                 Inserter.insert(result) // typing replaces the live selection
                 Sound.finish()
