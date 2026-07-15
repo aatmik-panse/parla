@@ -24,6 +24,8 @@ final class CleanupTests: XCTestCase {
         XCTAssertTrue(p.contains("Kubernetes"))
         XCTAssertTrue(p.contains("https://cal.com/x"))
         XCTAssertTrue(p.contains("Slack"))
+        XCTAssertTrue(p.contains("format them as a list"))
+        XCTAssertTrue(p.contains("\"new paragraph\""))
     }
 
     func testTransformPromptBranch() {
@@ -39,6 +41,8 @@ final class CleanupTests: XCTestCase {
         XCTAssertFalse(p.contains("SNIPPET_EXPANSION"))  // snippets do NOT apply
         XCTAssertFalse(p.contains("SomeChatApp"))        // app-tone does NOT apply
         XCTAssertFalse(p.contains("Remove filler words")) // not the cleanup prompt
+        XCTAssertFalse(p.contains("format them as a list"))
+        XCTAssertFalse(p.contains("\"new paragraph\""))
 
         let u = PromptBuilder.user(transcript: "make it formal", context: ctx)
         XCTAssertTrue(u.hasPrefix("make it formal"))     // instruction first

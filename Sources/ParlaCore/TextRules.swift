@@ -12,9 +12,20 @@ public enum TextRules {
         "org.alacritty", "co.zeit.hyper",
     ]
 
+    /// Bundle IDs where Return submits, so dictated newlines must not be typed.
+    public static let newlineSubmitBundleIDs: Set<String> = [
+        "com.tinyspeck.slackmacgap", "com.hnc.Discord", "com.apple.MobileSMS",
+        "net.whatsapp.WhatsApp", "ru.keepcoder.Telegram", "org.telegram.desktop",
+    ]
+
     public static func isTerminal(bundleID: String?) -> Bool {
         guard let bundleID else { return false }
         return terminalBundleIDs.contains(bundleID)
+    }
+
+    public static func flattensNewlines(bundleID: String?) -> Bool {
+        guard let bundleID else { return false }
+        return terminalBundleIDs.contains(bundleID) || newlineSubmitBundleIDs.contains(bundleID)
     }
 
     /// Collapse every whitespace run that contains a newline into a single space,

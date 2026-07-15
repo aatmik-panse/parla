@@ -17,6 +17,13 @@ final class TextRulesTests: XCTestCase {
         XCTAssertFalse(TextRules.isTerminal(bundleID: ""))
     }
 
+    func testFlattenNewlineTargets() {
+        XCTAssertTrue(TextRules.flattensNewlines(bundleID: "com.apple.Terminal"))
+        XCTAssertTrue(TextRules.flattensNewlines(bundleID: "com.tinyspeck.slackmacgap"))
+        XCTAssertFalse(TextRules.flattensNewlines(bundleID: "com.apple.TextEdit"))
+        XCTAssertFalse(TextRules.flattensNewlines(bundleID: nil))
+    }
+
     // MARK: flattenForTerminal
     func testFlattenSingleNewline() {
         XCTAssertEqual(TextRules.flattenForTerminal("ls\nrm -rf /"), "ls rm -rf /")

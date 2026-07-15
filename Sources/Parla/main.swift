@@ -394,7 +394,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let landingBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
             // Flatten against the actual keystroke target. The cleaned swap must
             // use this same bundle ID so both sides of its diff agree.
-            let insertText = TextRules.isTerminal(bundleID: landingBundleID)
+            let insertText = TextRules.flattensNewlines(bundleID: landingBundleID)
                 ? TextRules.flattenForTerminal(raw) : raw
             // Never log the transcript for a secure field — it's plausibly a
             // password, and unified logging is readable in Console.
@@ -483,7 +483,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Same terminal guard on the cleaned text — it replaces insertText in the
         // field, so it must be flattened too, and the plan must diff flattened vs
         // flattened (insertText) or the erase/verify counts won't match the field.
-        let cleaned = TextRules.isTerminal(bundleID: landingResult.bundleID)
+        let cleaned = TextRules.flattensNewlines(bundleID: landingResult.bundleID)
             ? TextRules.flattenForTerminal(cleanResult.text) : cleanResult.text
         await MainActor.run {
             let plan = LiveTyper.swapPlan(raw: insertText, cleaned: cleaned)
