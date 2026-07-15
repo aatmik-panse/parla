@@ -49,6 +49,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // shows a disabled "Downloading…" item instead of the download action.
     var downloadTask: URLSessionDownloadTask?
     var downloadObservation: NSKeyValueObservation?
+    // Set by the once-a-day GitHub Releases check; nil until a newer release is
+    // found, then menuNeedsUpdate surfaces an "Update available" item.
+    var availableUpdate: UpdateCheck.Update?
 
     // Hub: hubModel is cheap and touched at every launch (loadModel() sets
     // its modelLoaded below) — hubController, the window, is what's built
@@ -248,6 +251,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         hotkey.start()
+
+        // Convenience update check: once a day, off the main thread. nil version
+        // under `swift run` skips it. Never nags — just lights up a menu item.
+        Task {
+            if let update = await UpdateCheck.check(currentVersion: Self.appVersion) {
+                await MainActor.run { self.availableUpdate = update }
+            }
+        }
+    }
+
+    /// App version from the bundle's Info.plist (CFBundleShortVersionString).
+    /// nil under `swift run` (no bundle) so the update check skips.
+    static var appVersion: String? {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
     }
 
     /// ⌃⌘V is still physically held when the pasteLast edge fires; typing while
@@ -883,6 +900,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(store.url)
     }
 
+    @objc func openUpdate() {
+        guard let update = availableUpdate else { return }
+        NSWorkspace.shared.open(update.url)
+    }
+
     @objc func reportIssue() {
         NSWorkspace.shared.open(URL(string: "https://github.com/wannabeepolymath/parla/issues/new")!)
     }
@@ -961,6 +983,14 @@ extension AppDelegate: NSMenuDelegate {
         scratchItem.target = self
         menu.addItem(scratchItem)
         menu.addItem(.separator())
+
+        if let update = availableUpdate {
+            let item = NSMenuItem(title: "Update available (\(update.version))…",
+                                   action: #selector(openUpdate), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+            menu.addItem(.separator())
+        }
 
         if transcriber == nil {
             if downloadTask != nil {
