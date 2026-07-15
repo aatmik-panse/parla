@@ -267,7 +267,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// History can outlive its source app. Resolve the target at the keystroke,
-    /// then flatten terminal newlines so stored text cannot execute commands.
+    /// then flatten newlines where Return would fire: terminals run commands,
+    /// chat apps (Slack, Discord, etc.) send the message.
     private func insertStoredText(_ text: String) {
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         Inserter.insert(TextRules.flattensNewlines(bundleID: bundleID) ? TextRules.flattenForTerminal(text) : text)
