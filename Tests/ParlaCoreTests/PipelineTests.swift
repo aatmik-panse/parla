@@ -45,18 +45,18 @@ final class PipelineTests: XCTestCase {
 
     func testCleanReportsFailureOnThrow() async {
         let p = makePipeline(transcript: "raw words") { _, _ in
-            throw CleanupError(description: "boom")
+            throw CleanupError(description: "cleanup API 401", userMessage: "API key expired")
         }
         let result = await p.clean(transcript: "raw words")
         XCTAssertEqual(result.text, "raw words")
-        XCTAssertTrue(result.failed)
+        XCTAssertEqual(result.failure, "API key expired")
     }
 
     func testCleanReportsSuccess() async {
         let p = makePipeline(transcript: "raw words") { t, _ in "Raw words." }
         let result = await p.clean(transcript: "raw words")
         XCTAssertEqual(result.text, "Raw words.")
-        XCTAssertFalse(result.failed)
+        XCTAssertNil(result.failure)
     }
 
     func testEmptyTranscriptReturnsNil() async {
@@ -73,7 +73,7 @@ final class PipelineTests: XCTestCase {
         }
         let result = await p.clean(transcript: "hello there")
         XCTAssertEqual(result.text, "hello there")
-        XCTAssertTrue(result.failed)
+        XCTAssertEqual(result.failure, "cleanup returned invalid text")
     }
 
     // Pins the exact boundary: allowance = 2*raw + 200, failure strictly above it.
@@ -82,12 +82,12 @@ final class PipelineTests: XCTestCase {
 
         let over = makePipeline(transcript: raw) { _, _ in String(repeating: "b", count: 221) }
         let overResult = await over.clean(transcript: raw)
-        XCTAssertTrue(overResult.failed)
+        XCTAssertNotNil(overResult.failure)
         XCTAssertEqual(overResult.text, raw)
 
         let atLimit = makePipeline(transcript: raw) { _, _ in String(repeating: "b", count: 220) }
         let atResult = await atLimit.clean(transcript: raw)
-        XCTAssertFalse(atResult.failed)
+        XCTAssertNil(atResult.failure)
         XCTAssertEqual(atResult.text.count, 220)
     }
 
@@ -98,7 +98,7 @@ final class PipelineTests: XCTestCase {
         let p = makePipeline(transcript: "cal one", // base allowance 2*7 + 200 = 214
                              snippets: ["cal one": expansion]) { _, _ in expansion }
         let result = await p.clean(transcript: "cal one")
-        XCTAssertFalse(result.failed) // 630 > 214, but ≤ 214 + 630
+        XCTAssertNil(result.failure) // 630 > 214, but ≤ 214 + 630
         XCTAssertEqual(result.text, expansion)
     }
 
@@ -108,7 +108,7 @@ final class PipelineTests: XCTestCase {
                              snippets: ["cal one": expansion]) { _, _ in expansion }
         let result = await p.clean(transcript: "hello")
         XCTAssertEqual(result.text, "hello")
-        XCTAssertTrue(result.failed)
+        XCTAssertNotNil(result.failure)
     }
 
     // A bare quote pair sanitizes to nothing — success with empty text would
@@ -117,6 +117,6 @@ final class PipelineTests: XCTestCase {
         let p = makePipeline(transcript: "raw words") { _, _ in "\"\"" }
         let result = await p.clean(transcript: "raw words")
         XCTAssertEqual(result.text, "raw words")
-        XCTAssertTrue(result.failed)
+        XCTAssertEqual(result.failure, "cleanup returned no text")
     }
 }

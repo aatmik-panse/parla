@@ -26,9 +26,9 @@ public struct Pipeline {
     }
 
     /// LLM cleanup, sanitized. Never throws — cleanup must never kill a
-    /// dictation, so failures hand back the raw transcript with `failed: true`
+    /// dictation, so failures hand back the raw transcript and a safe message
     /// so the caller can tell the user why nothing changed.
-    public func clean(transcript: String) async -> (text: String, failed: Bool) {
+    public func clean(transcript: String) async -> (text: String, failure: String?) {
         let s = settings()
         let ctx = CleanupContext(dictionary: s.dictionary, snippets: s.snippets,
                                  appName: frontAppName())
@@ -36,7 +36,7 @@ public struct Pipeline {
             let cleaned = CleanupSanitizer.sanitize(try await cleanup(transcript, ctx))
             if cleaned.isEmpty {
                 NSLog("Parla cleanup sanitized to empty, keeping raw transcript")
-                return (transcript, true)
+                return (transcript, "cleanup returned no text")
             }
             // ponytail: char-count ceiling against LLM repetition loops (same
             // failure class as the whisper loops guarded in Transcriber). Cleanup
@@ -52,12 +52,19 @@ public struct Pipeline {
                 }
             if cleaned.count > allowance {
                 NSLog("Parla cleanup output degenerate (\(cleaned.count) chars for \(transcript.count)-char transcript), keeping raw transcript")
-                return (transcript, true)
+                return (transcript, "cleanup returned invalid text")
             }
-            return (cleaned, false)
+            return (cleaned, nil)
+        } catch let error as CleanupError {
+            NSLog("%@", "Parla cleanup failed, keeping raw transcript: \(error)")
+            return (transcript, error.userMessage)
+        } catch let error as URLError {
+            NSLog("%@", "Parla cleanup failed, keeping raw transcript: \(error)")
+            return (transcript, error.code == .timedOut
+                    ? "cleanup timed out" : "cleanup network unavailable")
         } catch {
             NSLog("%@", "Parla cleanup failed, keeping raw transcript: \(error)")
-            return (transcript, true)
+            return (transcript, "cleanup failed")
         }
     }
 

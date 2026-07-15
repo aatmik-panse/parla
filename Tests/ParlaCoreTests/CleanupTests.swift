@@ -140,7 +140,11 @@ final class CleanupTests: XCTestCase {
         do {
             _ = try await client.clean(transcript: "x", context: ctx)
             XCTFail("expected throw")
-        } catch {}
+        } catch let error as CleanupError {
+            XCTAssertEqual(error.userMessage, "cleanup rate limited")
+        } catch {
+            XCTFail("unexpected error type: \(error)")
+        }
     }
 
     func testNon200WithInvalidUTF8BodyThrows() async {

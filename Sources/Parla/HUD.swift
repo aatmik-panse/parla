@@ -13,7 +13,7 @@ final class HUD: @unchecked Sendable {
         case done
         case savedToHistory   // nothing landed in a field; transcript lives in history
         case cleanedInHistory // swap unverifiable; cleaned text only in history
-        case rawFallback    // cleanup call failed; raw transcript is final, no swap attempted
+        case rawFallback(String) // cleanup failed; raw transcript is final, with a safe reason
         case cancelled      // dictation aborted (key pressed while fn held)
         case error(String)
     }
@@ -264,10 +264,10 @@ final class HUD: @unchecked Sendable {
             label.stringValue = "✓ cleaned in history"
             panel.orderFrontRegardless()
             scheduleHide()
-        case .rawFallback:
+        case .rawFallback(let reason):
             dot.isHidden = true
             waveform.isHidden = true
-            label.stringValue = "✓ raw (cleanup failed)"
+            label.stringValue = "✓ raw (\(reason))"
             panel.orderFrontRegardless()
             scheduleHide()
         case .cancelled:

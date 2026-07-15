@@ -28,7 +28,8 @@ public struct OpenAICompatClient: CleanupProviding {
         req.timeoutInterval = 15
         let (data, response) = try await http.post(req)
         guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
-            throw CleanupError(description: "couldn't list models to pick a default")
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw CleanupError.api(statusCode: code, data: data)
         }
         struct Models: Decodable {
             struct Model: Decodable { let id: String }
@@ -75,8 +76,7 @@ public struct OpenAICompatClient: CleanupProviding {
         let (data, response) = try await http.post(req)
         guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            let snippet = String(decoding: data.prefix(300), as: UTF8.self)
-            throw CleanupError(description: "cleanup API \(code): \(snippet)")
+            throw CleanupError.api(statusCode: code, data: data)
         }
 
         struct Response: Decodable {

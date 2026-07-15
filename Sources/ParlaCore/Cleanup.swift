@@ -91,7 +91,34 @@ public struct URLSessionPoster: HTTPPosting {
 
 public struct CleanupError: Error, CustomStringConvertible {
     public let description: String
-    public init(description: String) { self.description = description }
+    public let userMessage: String
+
+    public init(description: String, userMessage: String = "cleanup failed") {
+        self.description = description
+        self.userMessage = userMessage
+    }
+
+    static func api(statusCode: Int, data: Data) -> CleanupError {
+        let snippet = String(decoding: data.prefix(300), as: UTF8.self)
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let body = json?["error"] as? [String: Any]
+        let code = body?["code"] as? String
+        let message: String
+        switch (statusCode, code) {
+        case (_, "expired_api_key"):
+            message = "API key expired"
+        case (401, _):
+            message = "invalid API key"
+        case (429, _):
+            message = "cleanup rate limited"
+        case (500...599, _):
+            message = "cleanup service unavailable"
+        default:
+            message = "cleanup failed"
+        }
+        return CleanupError(description: "cleanup API \(statusCode): \(snippet)",
+                            userMessage: message)
+    }
 }
 
 public protocol CleanupProviding {
@@ -154,8 +181,7 @@ public struct CleanupClient: CleanupProviding {
         let (data, response) = try await http.post(req)
         guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            let snippet = String(decoding: data.prefix(300), as: UTF8.self)
-            throw CleanupError(description: "cleanup API \(code): \(snippet)")
+            throw CleanupError.api(statusCode: code, data: data)
         }
 
         struct Response: Decodable {

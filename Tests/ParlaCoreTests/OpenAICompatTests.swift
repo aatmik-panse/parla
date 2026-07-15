@@ -62,6 +62,21 @@ final class OpenAICompatTests: XCTestCase {
         }
     }
 
+    func testExpiredAPIKeyHasSafeUserMessage() async {
+        let http = MockHTTP()
+        http.status = 401
+        http.body = Data(#"{"error":{"message":"Invalid API Key","code":"expired_api_key"}}"#.utf8)
+        let client = OpenAICompatClient(baseURL: "http://x/v1", apiKey: "k", model: "m", http: http)
+        do {
+            _ = try await client.clean(transcript: "x", context: ctx)
+            XCTFail("expected throw")
+        } catch let error as CleanupError {
+            XCTAssertEqual(error.userMessage, "API key expired")
+        } catch {
+            XCTFail("unexpected error type: \(error)")
+        }
+    }
+
     func testEmptyContentThrows() async {
         let http = MockHTTP()
         http.body = Data(#"{"choices":[{"message":{"content":""}}]}"#.utf8)

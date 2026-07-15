@@ -455,7 +455,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let insertText = landingResult.insertText
 
         // The POST starts after landing keystrokes; polish is async anyway.
-        let cleanTask: Task<(text: String, failed: Bool), Never>? = willPolish
+        let cleanTask: Task<(text: String, failure: String?), Never>? = willPolish
             ? Task { await pipeline.clean(transcript: raw) } : nil
         switch landing {
         case .field:
@@ -487,6 +487,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ? TextRules.flattenForTerminal(cleanResult.text) : cleanResult.text
         await MainActor.run {
             let plan = LiveTyper.swapPlan(raw: insertText, cleaned: cleaned)
+            let failureHUD = cleanResult.failure.map(HUD.State.rawFallback)
             guard gen == self.generation else {
                 // A newer dictation owns the field and HUD — no keystrokes, no
                 // HUD. History still records the result below when enabled.
@@ -496,10 +497,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if case .field = landing, Inserter.focusTarget() == .secure {
                 // Same never-type-into-secure invariant as landing.
                 NSLog("Parla swap path: focus moved to secure field, no cleaned swap")
-                let secureHUD: HUD.State = cleanResult.failed ? .rawFallback
-                    : plan == nil ? .done
+                let secureHUD: HUD.State = failureHUD ?? (plan == nil ? .done
                     : settings.historyEnabled ? .cleanedInHistory
-                    : .error("History off — cleanup discarded")
+                    : .error("History off — cleanup discarded"))
                 hud.show(secureHUD)
                 return
             }
@@ -507,11 +507,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .history:
                 // Nothing of ours in a field — history is the only durable landing.
                 hud.show(settings.historyEnabled
-                    ? (cleanResult.failed ? .rawFallback : .savedToHistory)
+                    ? (failureHUD ?? .savedToHistory)
                     : .error("History off — text discarded"))
             case .field:
                 guard let plan else { // polish was a no-op: either cleanup failed, or the LLM agreed raw was fine
-                    hud.show(cleanResult.failed ? .rawFallback : .done)
+                    hud.show(failureHUD ?? .done)
                     return
                 }
                 if Inserter.canEraseTyped(insertText) {
@@ -533,7 +533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // non-nil past the guard). cleaned is dropped when cleanup failed or
         // matched raw. Append on main to serialize with menu reads/Clear.
         if settings.historyEnabled {
-            let cleanedForHistory = (!cleanResult.failed && cleanResult.text != raw) ? cleanResult.text : nil
+            let cleanedForHistory = (cleanResult.failure == nil && cleanResult.text != raw) ? cleanResult.text : nil
             let entry = HistoryEntry(raw: raw, cleaned: cleanedForHistory, appName: appName)
             DispatchQueue.main.async { self.history.append(entry) }
         }
