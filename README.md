@@ -116,6 +116,19 @@ is saved to history instead of overwriting new content. A failed transform
 never types the spoken instruction itself; nothing is inserted. Password
 fields and empty selections refuse before recording even starts.
 
+## One-tap polish
+
+Command mode without the spoken command: with text selected, **quick-tap
+⇧+fn** (under 200ms) or press **⌃⌘P** — no speaking — and the selection is
+proofread in place by the cleanup model: spelling, punctuation,
+capitalization, and grammar fixed, with the writer's voice, tone, wording,
+language, and formatting preserved. Dictionary spellings apply. If nothing
+needs fixing the HUD shows "✓ No changes" and the field is left untouched.
+No whisper pass runs, so polish works even before a model is downloaded.
+All command-mode safety applies: password fields refuse, the selection is
+re-verified before replacing (changed ⇒ result parked in history), and a
+failed polish inserts nothing.
+
 ## Permissions
 
 Parla needs:

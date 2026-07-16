@@ -196,4 +196,30 @@ final class HotkeyTests: XCTestCase {
         XCTAssertFalse(m.keyDown(keyCode: 9, cmd: true, at: 0))
         XCTAssertEqual(out, [])
     }
+
+    // MARK: ⌃⌘P one-tap polish
+
+    func testCtrlCmdPPolishesAndIsSwallowed() {
+        var out: [HotkeyMonitor.Edge] = []
+        let m = monitor(&out)
+        XCTAssertTrue(m.keyDown(keyCode: 35, cmd: true, ctrl: true, at: 0))
+        XCTAssertEqual(out, [.polish])
+    }
+
+    func testPlainCmdPIgnored() {
+        var out: [HotkeyMonitor.Edge] = []
+        let m = monitor(&out)
+        XCTAssertFalse(m.keyDown(keyCode: 35, cmd: true, at: 0))
+        XCTAssertEqual(out, [])
+    }
+
+    func testCtrlCmdPWhileFnHeldCancelsNotPolishes() {
+        // Any real key while fn is held cancels the dictation; the polish
+        // chord must not fire mid-session.
+        var out: [HotkeyMonitor.Edge] = []
+        let m = monitor(&out)
+        m.handle(keyCode: 63, fnActive: true, at: 0)
+        XCTAssertFalse(m.keyDown(keyCode: 35, fnActive: true, cmd: true, ctrl: true, at: 0.3))
+        XCTAssertEqual(out, [.down(command: false), .cancel])
+    }
 }

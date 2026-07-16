@@ -10,6 +10,8 @@ final class HUD: @unchecked Sendable {
         case handsFree      // fn+Space latched: still recording, fn can be released
         case transcribing   // fn-up → raw text landing (fast, on-device)
         case polishing        // raw landed; LLM cleanup in flight — resolves to done/savedToHistory/cleanedInHistory
+        case polishingSelection // one-tap polish in flight over the selection
+        case noChange         // selection edit returned identical text — nothing typed
         case done
         case savedToHistory   // nothing landed in a field; transcript lives in history
         case cleanedInHistory // swap unverifiable; cleaned text only in history
@@ -246,6 +248,17 @@ final class HUD: @unchecked Sendable {
             waveform.isHidden = true
             label.stringValue = "✓ · polishing…"
             panel.orderFrontRegardless() // no scheduleHide — a terminal state follows
+        case .polishingSelection:
+            dot.isHidden = true
+            waveform.isHidden = true
+            label.stringValue = "Polishing…"
+            panel.orderFrontRegardless() // no scheduleHide — a terminal state follows
+        case .noChange:
+            dot.isHidden = true
+            waveform.isHidden = true
+            label.stringValue = "✓ No changes"
+            panel.orderFrontRegardless()
+            scheduleHide()
         case .done:
             dot.isHidden = true
             waveform.isHidden = true

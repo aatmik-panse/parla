@@ -184,4 +184,23 @@ final class CleanupTests: XCTestCase {
         let out = try await client.clean(transcript: "x", context: ctx)
         XCTAssertEqual(out, "AB")
     }
+
+    // MARK: one-tap polish instruction
+
+    func testPolishInstructionRidesTheTransformPrompt() {
+        // Polish is command mode with a built-in instruction: the instruction is
+        // the user-message head, the selection stays delimited data after <text>.
+        let ctx = CleanupContext(dictionary: [], snippets: [:], appName: nil,
+                                 selection: "teh text")
+        let user = PromptBuilder.user(transcript: Polish.instruction, context: ctx)
+        XCTAssertTrue(user.hasPrefix(Polish.instruction))
+        XCTAssertTrue(user.hasSuffix("<text>\nteh text"))
+    }
+
+    func testPolishInstructionPreservesTheWriterVoice() {
+        // Contract pinned by design: proofread-only, never a rewrite.
+        for word in ["voice", "tone", "unchanged"] {
+            XCTAssertTrue(Polish.instruction.contains(word), "missing \"\(word)\"")
+        }
+    }
 }
