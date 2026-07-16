@@ -186,7 +186,7 @@ final class HUD: NSObject, @unchecked Sendable {
             let bar = idlePillFrame(for: dockEdge)
             // The chip must CONTAIN the bar's footprint: shrinking under the
             // cursor fires mouseExited → collapse → mouseEntered in a loop.
-            var chip = NSRect(x: 0, y: 0, width: 86, height: max(26, bar.height))
+            var chip = NSRect(x: 0, y: 0, width: max(86, bar.width), height: max(26, bar.height))
             chip.origin.x = (panel.frame.width - chip.width) / 2
             chip.origin.y = (panel.frame.height - chip.height) / 2
             // On a side dock the bar sits near the screen edge — keep the chip's

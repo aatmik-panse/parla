@@ -174,6 +174,10 @@ public enum Inserter {
     public struct CapturedSelection {
         public let text: String
         let element: AXUIElement
+        /// Selection range at capture (UTF-16), when the field exposes it —
+        /// nil for AX-opaque fields. Distinguishes the selected occurrence
+        /// when identical text appears elsewhere in the same field.
+        let range: CFRange?
     }
 
     /// The focused element's current selection via AX, with the element it
@@ -194,15 +198,22 @@ public enum Inserter {
                   NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil")
             return nil
         }
-        return CapturedSelection(text: text, element: element)
+        return CapturedSelection(text: text, element: element, range: selectedRange(of: element))
     }
 
-    /// True when the SAME element is still focused and its selection is
-    /// textually unchanged — required before typing over it. AXUIElement
-    /// equality (CFEqual) compares pid + element token, not pointer identity.
+    /// True when the SAME element is still focused and the SAME occurrence is
+    /// still selected (text and, where exposed, range) — required before
+    /// typing over it. AXUIElement equality (CFEqual) compares pid + element
+    /// token, not pointer identity.
     public static func selectionIntact(_ captured: CapturedSelection) -> Bool {
         guard let element = focusedElement(), CFEqual(element, captured.element) else { return false }
-        return selectedText(of: element) == captured.text
+        guard selectedText(of: element) == captured.text else { return false }
+        // Same text at a DIFFERENT range means the user reselected an identical
+        // occurrence elsewhere — not the one the edit was made for. A field
+        // that stopped (or never started) exposing the range compares nil==nil.
+        let range = selectedRange(of: element)
+        return range?.location == captured.range?.location
+            && range?.length == captured.range?.length
     }
 
     private static func selectedText(of element: AXUIElement) -> String? {
@@ -210,6 +221,15 @@ public enum Inserter {
         guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &ref) == .success,
               let s = ref as? String, !s.isEmpty else { return nil }
         return s
+    }
+
+    private static func selectedRange(of element: AXUIElement) -> CFRange? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &ref) == .success,
+              let ref, CFGetTypeID(ref) == AXValueGetTypeID() else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(ref as! AXValue, .cfRange, &range) else { return nil }
+        return range
     }
 
     /// True when the characters immediately before the cursor are exactly

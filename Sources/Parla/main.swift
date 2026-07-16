@@ -602,7 +602,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         guard let transformed = await editSelection(instruction: instruction, selection: capture.text,
-                                                    settings: settings, label: "transform") else { return }
+                                                    settings: settings, label: "transform", gen: gen) else { return }
         await MainActor.run {
             self.applySelectionEdit(transformed, capture: capture, gen: gen, settings: settings)
         }
@@ -650,11 +650,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Same hard requirement as transforms: no raw fallback over a selection.
         guard cleanupIsConfigured(settings: settings, env: ProcessInfo.processInfo.environment) else {
             NSLog("Parla polish: cleanup not configured")
-            DispatchQueue.main.async { hud.show(.error("Cleanup not configured")) }
+            DispatchQueue.main.async {
+                guard gen == self.generation else { return }
+                hud.show(.error("Cleanup not configured"))
+            }
             return
         }
         guard let polished = await editSelection(instruction: Polish.instruction, selection: capture.text,
-                                                 settings: settings, label: "polish") else { return }
+                                                 settings: settings, label: "polish", gen: gen) else { return }
         await MainActor.run {
             self.applySelectionEdit(polished, capture: capture, gen: gen, settings: settings)
         }
@@ -666,9 +669,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// selection. Any failure here is hard — shows a toast, returns nil,
     /// nothing inserted, nothing stored.
     func editSelection(instruction: String, selection: String, settings: Settings,
-                       label: String) async -> String? {
+                       label: String, gen: Int) async -> String? {
         let hud = self.hud
         let toast = label.capitalized + " failed"
+        // Failure toasts land asynchronously — by then a newer session may own
+        // the HUD; never stomp its state with a stale error.
+        let fail = {
+            DispatchQueue.main.async {
+                guard gen == self.generation else { return }
+                hud.show(.error(toast))
+            }
+        }
         let ctx = CleanupContext(dictionary: settings.dictionary, snippets: [:], appName: nil, selection: selection)
         let edited: String
         do {
@@ -679,12 +690,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             edited = CleanupSanitizer.sanitizeEdit(out, original: selection)
         } catch {
             NSLog("%@", "Parla \(label) failed: \(error)")
-            DispatchQueue.main.async { hud.show(.error(toast)) }
+            fail()
             return nil
         }
-        guard !edited.isEmpty else {
-            NSLog("Parla %@: empty result", label)
-            DispatchQueue.main.async { hud.show(.error(toast)) }
+        // Whitespace-only output would ERASE the selection, not edit it —
+        // hard failure. (An unchanged whitespace-only selection is fine: the
+        // no-change check upstream types nothing.)
+        guard edited == selection ||
+              !edited.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            NSLog("Parla %@: empty/whitespace-only result", label)
+            fail()
             return nil
         }
         // ponytail: generous expansion ceiling; add repeated-substring detection
@@ -692,7 +707,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let lengthCeiling = max(2000, 6 * selection.count)
         guard edited.count <= lengthCeiling else {
             NSLog("Parla %@: result over ceiling (%d > %d)", label, edited.count, lengthCeiling)
-            DispatchQueue.main.async { hud.show(.error(toast)) }
+            fail()
             return nil
         }
         return edited
