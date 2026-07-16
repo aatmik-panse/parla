@@ -168,6 +168,21 @@ public enum CleanupSanitizer {
         }
         return trimmed
     }
+
+    /// Sanitizer for selection edits (transforms/polish): strips only wrappers
+    /// the ORIGINAL selection didn't have. The user's own quotes are content
+    /// and must survive the round-trip, as must boundary whitespace they
+    /// selected — otherwise an "unchanged" result would still rewrite the field.
+    public static func sanitizeEdit(_ s: String, original: String) -> String {
+        guard original == original.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return s // selected boundary whitespace is content: hands off
+        }
+        if original.count >= 2, let first = original.first, let last = original.last,
+           pairs.contains(where: { first == $0.0 && last == $0.1 }) {
+            return s.trimmingCharacters(in: .whitespacesAndNewlines) // keep the user's quotes
+        }
+        return sanitize(s)
+    }
 }
 
 public struct CleanupClient: CleanupProviding {

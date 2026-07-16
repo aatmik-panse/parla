@@ -30,6 +30,10 @@ final class HUD: NSObject, @unchecked Sendable {
     private var hideItem: DispatchWorkItem?
     // Currently collapsed to the mini idle capsule (vs. the full active pill).
     private var isIdle = false
+    // A non-terminal state (listening/transcribing/polishing) is showing: Esc
+    // must not hide the pill — a polish finishing behind a dismissed HUD would
+    // otherwise replace text invisibly.
+    private var busy = false
 
     /// Pill polish button clicked: the app layer proofreads the current
     /// selection. The panel is non-activating, so the click never steals focus
@@ -99,6 +103,10 @@ final class HUD: NSObject, @unchecked Sendable {
                         backing: .buffered, defer: false)
         super.init()
         panel.level = .statusBar
+        // Never take key on a click: a key panel becomes the system-wide AX
+        // focus, and the polish button must read the FRONT APP's selection.
+        // Buttons don't need key status to receive clicks.
+        panel.becomesKeyOnlyIfNeeded = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false // the pill's own glow is the only shadow
@@ -175,12 +183,14 @@ final class HUD: NSObject, @unchecked Sendable {
     private func hover(_ inside: Bool) {
         guard isIdle, panel.isVisible else { return }
         if inside {
-            var chip = NSRect(x: 0, y: 0, width: 86, height: 26)
+            let bar = idlePillFrame(for: dockEdge)
+            // The chip must CONTAIN the bar's footprint: shrinking under the
+            // cursor fires mouseExited → collapse → mouseEntered in a loop.
+            var chip = NSRect(x: 0, y: 0, width: 86, height: max(26, bar.height))
             chip.origin.x = (panel.frame.width - chip.width) / 2
             chip.origin.y = (panel.frame.height - chip.height) / 2
             // On a side dock the bar sits near the screen edge — keep the chip's
             // outer edge where the bar's was so it grows inward, not off-screen.
-            let bar = idlePillFrame(for: dockEdge)
             if dockEdge == .left { chip.origin.x = bar.minX }
             if dockEdge == .right { chip.origin.x = bar.maxX - chip.width }
             polishButton.sizeToFit()
@@ -274,6 +284,12 @@ final class HUD: NSObject, @unchecked Sendable {
     func show(_ state: State) {
         hideItem?.cancel()
         hideItem = nil
+        switch state {
+        case .listening, .handsFree, .transcribing, .polishing, .polishingSelection:
+            busy = true
+        default:
+            busy = false
+        }
         // .listening moves to the screen the user is dictating into; every other
         // state stays on the panel's current screen.
         if case .listening = state { expand(to: Self.activeScreen()) } else { expand() }
@@ -362,9 +378,10 @@ final class HUD: NSObject, @unchecked Sendable {
     func hide() { settle() }
 
     /// Esc while idle: dismiss a visible toast without disturbing the idle bar
-    /// (Esc fires constantly in normal use — this must be a no-op then).
+    /// (Esc fires constantly in normal use — this must be a no-op then). Busy
+    /// states (a polish in flight) stay visible — the work continues.
     func dismiss() {
-        guard panel.isVisible, !isIdle else { return }
+        guard panel.isVisible, !isIdle, !busy else { return }
         settle()
     }
 

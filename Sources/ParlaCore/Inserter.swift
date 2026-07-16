@@ -104,12 +104,20 @@ public enum Inserter {
 
     /// Focused element via the system-wide query, falling back to asking the
     /// frontmost app directly — Electron/Chromium apps often answer only the
-    /// app-level query.
+    /// app-level query. Parla's own UI is never a target: if the system query
+    /// lands on us (the pill panel can hold system focus after a click), fall
+    /// through to the frontmost app, where the user's field still lives.
     private static func focusedElement() -> AXUIElement? {
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
         if AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-           let focused { return (focused as! AXUIElement) }
+           let focused {
+            let element = focused as! AXUIElement
+            var pid: pid_t = 0
+            if AXUIElementGetPid(element, &pid) != .success || pid != getpid() {
+                return element
+            }
+        }
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         let appEl = AXUIElementCreateApplication(app.processIdentifier)
         if AXUIElementCopyAttributeValue(appEl, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
@@ -159,11 +167,45 @@ public enum Inserter {
         return (text as NSString, range.location)
     }
 
-    /// The focused element's current selection via AX. nil when there's no
-    /// selection, it's empty, or the field is AX-opaque — the caller treats all
-    /// three the same (refuse to transform). Read once at command fn-down.
-    public static func selectedText() -> String? {
-        guard let element = focusedElement() else { return nil }
+    /// A selection captured for a transform/polish: the text plus the AX
+    /// element it came from, so insert-time verification can require the SAME
+    /// field — two fields can hold identical text, and textual equality alone
+    /// would type into the wrong one.
+    public struct CapturedSelection {
+        public let text: String
+        let element: AXUIElement
+    }
+
+    /// The focused element's current selection via AX, with the element it
+    /// came from. nil when there's no selection, it's empty, or the field is
+    /// AX-opaque — the caller treats all three the same (refuse to transform).
+    /// Read once at trigger time (command fn-down / polish click).
+    public static func captureSelection() -> CapturedSelection? {
+        guard let element = focusedElement() else {
+            NSLog("Parla captureSelection: no focused element (front=%@)",
+                  NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil")
+            return nil
+        }
+        guard let text = selectedText(of: element) else {
+            var roleRef: CFTypeRef?
+            _ = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+            NSLog("Parla captureSelection: empty (role=%@ front=%@)",
+                  (roleRef as? String) ?? "?",
+                  NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil")
+            return nil
+        }
+        return CapturedSelection(text: text, element: element)
+    }
+
+    /// True when the SAME element is still focused and its selection is
+    /// textually unchanged — required before typing over it. AXUIElement
+    /// equality (CFEqual) compares pid + element token, not pointer identity.
+    public static func selectionIntact(_ captured: CapturedSelection) -> Bool {
+        guard let element = focusedElement(), CFEqual(element, captured.element) else { return false }
+        return selectedText(of: element) == captured.text
+    }
+
+    private static func selectedText(of element: AXUIElement) -> String? {
         var ref: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &ref) == .success,
               let s = ref as? String, !s.isEmpty else { return nil }

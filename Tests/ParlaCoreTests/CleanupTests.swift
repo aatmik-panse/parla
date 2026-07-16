@@ -185,6 +185,26 @@ final class CleanupTests: XCTestCase {
         XCTAssertEqual(out, "AB")
     }
 
+    // MARK: selection-edit sanitizer
+
+    func testSanitizeEditKeepsTheUsersOwnQuotes() {
+        // The selection itself is quoted — the quotes are content, not chatter.
+        XCTAssertEqual(CleanupSanitizer.sanitizeEdit("\"hi there\"", original: "\"hi tehre\""),
+                       "\"hi there\"")
+    }
+
+    func testSanitizeEditStillStripsModelAddedQuotes() {
+        XCTAssertEqual(CleanupSanitizer.sanitizeEdit("\"hi there\"", original: "hi tehre"),
+                       "hi there")
+    }
+
+    func testSanitizeEditPreservesSelectedBoundaryWhitespace() {
+        // An unchanged result must compare equal to the selection, indentation
+        // and trailing newline included — else "no changes" still retypes.
+        XCTAssertEqual(CleanupSanitizer.sanitizeEdit("  hi there\n", original: "  hi tehre\n"),
+                       "  hi there\n")
+    }
+
     // MARK: polish-button instruction
 
     func testPolishInstructionRidesTheTransformPrompt() {

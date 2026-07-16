@@ -131,8 +131,9 @@ triggers it automatically. The pill never activates Parla (it's a
 non-activating panel), so your app keeps focus and the selection survives the
 click. The button lives on the always-on idle pill, so it requires **Show
 pill at all times** (the default). All command-mode safety applies: password
-fields refuse, the selection is re-verified before replacing (changed ⇒
-result parked in history), and a failed polish inserts nothing.
+fields refuse, the same field must still hold the same selection before
+replacing (changed ⇒ result parked in history, or discarded when history is
+off), and a failed polish inserts nothing.
 
 ## Permissions
 
