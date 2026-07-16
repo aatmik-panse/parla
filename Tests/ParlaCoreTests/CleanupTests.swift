@@ -185,7 +185,7 @@ final class CleanupTests: XCTestCase {
         XCTAssertEqual(out, "AB")
     }
 
-    // MARK: one-tap polish instruction
+    // MARK: polish-button instruction
 
     func testPolishInstructionRidesTheTransformPrompt() {
         // Polish is command mode with a built-in instruction: the instruction is

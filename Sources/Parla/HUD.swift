@@ -4,7 +4,7 @@ import ParlaCore
 /// Floating pill shown while dictating. All methods are main-thread only.
 // ponytail: @unchecked Sendable — main-thread-only by contract, lets async
 // callers hand it to DispatchQueue.main without non-Sendable capture warnings.
-final class HUD: @unchecked Sendable {
+final class HUD: NSObject, @unchecked Sendable {
     enum State {
         case listening(command: Bool)  // command: transform-selection mode ("Command…")
         case handsFree      // fn+Space latched: still recording, fn can be released
@@ -26,9 +26,15 @@ final class HUD: @unchecked Sendable {
     private let dot = NSView()
     private let waveform = WaveformView()
     private let appIcon = NSImageView() // shown only inside the drag chip
+    private let polishButton = NSButton(title: "✦ Polish", target: nil, action: nil)
     private var hideItem: DispatchWorkItem?
     // Currently collapsed to the mini idle capsule (vs. the full active pill).
     private var isIdle = false
+
+    /// Pill polish button clicked: the app layer proofreads the current
+    /// selection. The panel is non-activating, so the click never steals focus
+    /// — the front app's selection survives.
+    var onPolish: (() -> Void)?
 
     /// Which screen edge the pill docks to, and where along it (0…1). A drag
     /// snaps to the nearest edge; both persist across sessions.
@@ -86,11 +92,12 @@ final class HUD: @unchecked Sendable {
         }
     }
 
-    init() {
+    override init() {
         // Panel is larger than the pill so the lavender glow has room to render.
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 284, height: 68),
                         styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: false)
+        super.init()
         panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -141,6 +148,15 @@ final class HUD: @unchecked Sendable {
         appIcon.isHidden = true
         pill.addSubview(appIcon)
 
+        // Polish button, revealed by hovering the idle bar (see hover(_:)).
+        polishButton.isBordered = false
+        polishButton.font = .systemFont(ofSize: 11, weight: .medium)
+        polishButton.contentTintColor = .white
+        polishButton.target = self
+        polishButton.action = #selector(polishClicked)
+        polishButton.isHidden = true
+        pill.addSubview(polishButton)
+
         // Migration: the old free-pin origin is gone — drop its stale pref once.
         UserDefaults.standard.removeObject(forKey: "hudOrigin")
         if let raw = UserDefaults.standard.string(forKey: Self.edgeKey),
@@ -150,6 +166,47 @@ final class HUD: @unchecked Sendable {
         }
         pill.onDragStart = { [weak self] in self?.beginDragChip() }
         pill.onDragEnd = { [weak self] in self?.snapToNearestEdge() }
+        pill.onHover = { [weak self] inside in self?.hover(inside) }
+    }
+
+    /// Hovering the idle bar morphs it into a "✦ Polish" chip; leaving (or any
+    /// state change — dictation, drag, toast) collapses back. Idle only: during
+    /// dictation the pill shows state and must not grow a button under the cursor.
+    private func hover(_ inside: Bool) {
+        guard isIdle, panel.isVisible else { return }
+        if inside {
+            var chip = NSRect(x: 0, y: 0, width: 86, height: 26)
+            chip.origin.x = (panel.frame.width - chip.width) / 2
+            chip.origin.y = (panel.frame.height - chip.height) / 2
+            // On a side dock the bar sits near the screen edge — keep the chip's
+            // outer edge where the bar's was so it grows inward, not off-screen.
+            let bar = idlePillFrame(for: dockEdge)
+            if dockEdge == .left { chip.origin.x = bar.minX }
+            if dockEdge == .right { chip.origin.x = bar.maxX - chip.width }
+            polishButton.sizeToFit()
+            polishButton.frame = NSRect(
+                x: (chip.width - polishButton.frame.width) / 2,
+                y: (chip.height - polishButton.frame.height) / 2,
+                width: polishButton.frame.width, height: polishButton.frame.height)
+            polishButton.isHidden = false
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.15
+                pill.animator().frame = chip
+            }
+            pill.layer?.cornerRadius = 13
+        } else {
+            polishButton.isHidden = true
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.15
+                pill.animator().frame = idlePillFrame(for: dockEdge)
+            }
+            pill.layer?.cornerRadius = min(idleBarSize.width, idleBarSize.height) / 2
+        }
+    }
+
+    @objc private func polishClicked() {
+        hover(false) // collapse now; show(.polishingSelection) follows from the app layer
+        onPolish?()
     }
 
     /// Show the idle capsule (position on the active screen if the panel was off).
@@ -168,6 +225,7 @@ final class HUD: @unchecked Sendable {
         dot.isHidden = true
         waveform.isHidden = true
         label.isHidden = true
+        polishButton.isHidden = true
         let target = (screen ?? currentScreen()).map { dockOrigin(idle: true, on: $0) }
         let frame = idlePillFrame(for: dockEdge)
         if animated {
@@ -190,6 +248,7 @@ final class HUD: @unchecked Sendable {
         let wasIdle = isIdle
         isIdle = false
         appIcon.isHidden = true // in case fn lands mid-drag
+        polishButton.isHidden = true // in case dictation starts mid-hover
         label.isHidden = false
         let target = (screen ?? currentScreen()).map { dockOrigin(idle: false, on: $0) }
         if wasIdle {
@@ -344,6 +403,7 @@ final class HUD: @unchecked Sendable {
     /// with the cursor. Mid-dictation drags keep the full pill (it shows state).
     private func beginDragChip() {
         guard isIdle else { return }
+        polishButton.isHidden = true // a drag from the hover chip shows the icon instead
         let chip = chipFrame()
         appIcon.frame = chip.insetBy(dx: 6, dy: 6).offsetBy(dx: -chip.minX, dy: -chip.minY)
         appIcon.isHidden = false
@@ -417,8 +477,21 @@ final class DraggablePill: NSView {
     var onDragStart: (() -> Void)?
     /// Called after a real drag (not a plain click); the window is at its dropped origin.
     var onDragEnd: (() -> Void)?
+    /// Cursor entered/left the pill (tracks the live frame via .inVisibleRect).
+    var onHover: ((Bool) -> Void)?
     private var dragOffset: NSPoint?  // mouse → window-origin gap at mouseDown
     private var didDrag = false       // plain clicks must not pin the pill
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) { onHover?(true) }
+    override func mouseExited(with event: NSEvent) { onHover?(false) }
 
     override func mouseDown(with event: NSEvent) {
         guard let win = window else { return }

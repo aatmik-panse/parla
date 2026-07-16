@@ -1,21 +1,24 @@
-# One-tap Polish — design
+# Polish button — design
 
 2026-07-17. Wispr-Flow-style polish: fix a selection's spelling, punctuation,
-capitalization, and grammar with one gesture — no speaking. Command mode
+capitalization, and grammar with one click — no speaking. Command mode
 without the spoken command.
 
-## Triggers (both)
+Revised same day: originally hotkey-triggered (⇧+fn quick tap / ⌃⌘P); the
+owner wants an explicit button and nothing automatic — polish must run only
+on a deliberate click. Both hotkeys were removed.
 
-- **⇧+fn quick tap** (< 200ms, with text selected). Today a short command tap
-  is discarded as accidental; command mode has already captured the selection
-  at fn-down, so a short release becomes "polish it" instead. Holding ⇧+fn and
-  speaking is unchanged.
-- **⌃⌘P while idle** — a new `HotkeyMonitor` edge following the existing
-  ⌃⌘V (paste last) / ⌃⌘S (scratchpad) chord pattern; swallowed, never reaches
-  the front app. The selection is captured at the keypress.
+## Trigger (button only)
 
-Plain fn short taps stay discarded (accidental Globe press). ⌃⌘P during a
-dictation hits the existing any-key-cancels rule, unchanged.
+Hovering the idle pill morphs it into a **✦ Polish** chip; clicking runs the
+polish. The panel is non-activating, so the click never steals focus — the
+front app's selection is captured at the click. On side docks the chip grows
+inward (never off-screen). Any state change (dictation start, drag, toast)
+hides the button; it reappears on the next hover while idle. The button lives
+on the always-on idle pill, so it requires `showHudAlways` (the default).
+
+No hotkey exists and nothing triggers polish automatically. Short ⇧+fn taps
+stay discarded as accidental, exactly as before.
 
 ## Flow
 
@@ -43,9 +46,10 @@ New in the shared helper (both polish and spoken transforms benefit):
 
 - **no-change detection** — result identical to the selection shows
   "✓ No changes" and types nothing
-- **modifier wait** — ⌃⌘P's Control/Command may still be held when the LLM
-  returns; insertion waits (~1s max, 50ms steps) for a clean keyboard, like
-  paste-last does, then re-verifies and types. Timeout → parked in history.
+- **modifier wait** — a modifier (⇧+fn's shift after a transform) may still
+  be held when the LLM returns; insertion waits (~1s max, 50ms steps) for a
+  clean keyboard, like paste-last does, then re-verifies and types.
+  Timeout → parked in history.
 
 ## HUD
 
@@ -60,8 +64,8 @@ with a toast.
 
 ## Tests
 
-`HotkeyMonitor` is a pure state machine — new cases covered in
-HotkeyTests: ⌃⌘P idle fires `.polish` and is swallowed; ⌃⌘P during push
-cancels (existing rule); plain/partial chords ignored. CleanupTests pin the
-polish instruction's contract (proofread-only, voice-preserving, routed
-through the transform prompt with the selection delimited as data).
+CleanupTests pin the polish instruction's contract (proofread-only,
+voice-preserving, routed through the transform prompt with the selection
+delimited as data). The button and hover morph are AppKit UI in the app
+target, outside the unit-tested core — verified by hand, like the rest of
+the HUD.

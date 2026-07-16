@@ -99,6 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { self?.hud.push(level: level) }
         }
 
+        hud.onPolish = { [weak self] in self?.polishSelection() }
+
         hotkey.onEdge = { [weak self] edge in
             guard let self else { return }
             NSLog("Parla: fn edge %@", "\(edge)")
@@ -195,21 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Short tap = accidental Globe press (emoji/input switch): abort
                 // silently, never run whisper. Recording still STARTED on fn-down
                 // so we don't clip speech onset; we just discard it here.
-                // Except in command mode: a quick ⇧+fn tap means no instruction —
-                // one-tap polish of the selection captured at fn-down.
                 if short {
-                    if self.commandMode {
-                        self.isRecording = false
-                        _ = self.recorder.stop() // discard the sliver of audio
-                        let selection = self.commandSelection
-                        let gen = self.generation
-                        self.setStatus("…"); self.hud.show(.polishingSelection)
-                        self.processTask = Task { [prev = self.processTask] in
-                            await prev?.value
-                            await self.polish(selection: selection, gen: gen)
-                        }
-                        return
-                    }
                     NSLog("Parla: short tap, discarding")
                     self.cancelDictation(silent: true)
                     return
@@ -258,23 +246,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .pasteLast:
                 guard let text = self.history.entries.first?.best else { return }
                 self.pasteWhenModifiersClear(text)
-            case .polish:
-                // One-tap polish (⌃⌘P while idle): command mode's capture and
-                // refusals, minus the recording.
-                let focus = Inserter.focusTarget()
-                guard focus != .secure else {
-                    self.hud.show(.error("No transforms in password fields")); return
-                }
-                guard let selection = Inserter.selectedText() else {
-                    self.hud.show(.error("Select text first")); return
-                }
-                self.generation += 1 // invalidates any pending cleaned-swap
-                let gen = self.generation
-                self.setStatus("…"); self.hud.show(.polishingSelection)
-                self.processTask = Task { [prev = self.processTask] in
-                    await prev?.value
-                    await self.polish(selection: selection, gen: gen)
-                }
             case .openScratchpad:
                 self.scratchpad.show()
             case .dismiss:
@@ -639,10 +610,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // a landed transform isn't a dictation, and the source text is the user's.
     }
 
-    /// One-tap polish (⇧+fn quick tap / ⌃⌘P): run the built-in proofread
-    /// instruction over the selection — command mode without the spoken
-    /// command. No whisper pass, so it works with no model downloaded. Runs on
-    /// the processTask chain like transform() so insertions land in order.
+    /// Pill "✦ Polish" button: command mode's capture and refusals, minus the
+    /// recording. Explicit click only — polish is never gesture-triggered.
+    /// The click didn't activate us (non-activating panel), so the front app's
+    /// focus and selection are still live.
+    func polishSelection() {
+        let focus = Inserter.focusTarget()
+        guard focus != .secure else {
+            hud.show(.error("No transforms in password fields")); return
+        }
+        guard let selection = Inserter.selectedText() else {
+            hud.show(.error("Select text first")); return
+        }
+        generation += 1 // invalidates any pending cleaned-swap
+        let gen = generation
+        setStatus("…"); hud.show(.polishingSelection)
+        processTask = Task { [prev = self.processTask] in
+            await prev?.value
+            await self.polish(selection: selection, gen: gen)
+        }
+    }
+
+    /// Polish body: run the built-in proofread instruction over the selection —
+    /// command mode without the spoken command. No whisper pass, so it works
+    /// with no model downloaded. Runs on the processTask chain like transform()
+    /// so insertions land in order.
     func polish(selection: String, gen: Int) async {
         let hud = self.hud
         defer {
@@ -721,9 +713,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = park("stale generation")
             return
         }
-        // ⌃⌘P (or ⇧+fn's shift) may still be physically held when a fast LLM
-        // returns; typing with real modifiers down risks the app reading them
-        // alongside our events. Wait for release like paste-last, then verify.
+        // Modifiers (⇧+fn's shift after a transform, or any key held across a
+        // fast LLM round-trip) may still be physically down; typing with real
+        // modifiers held risks the app reading them alongside our events.
+        // Wait for release like paste-last, then verify.
         guard NSEvent.modifierFlags
             .intersection([.command, .control, .option, .shift, .function]).isEmpty else {
             if tries > 0 {

@@ -17,8 +17,8 @@ public struct CleanupContext {
 }
 
 public enum Polish {
-    /// Built-in instruction for one-tap polish (⇧+fn quick tap / ⌃⌘P). Rides
-    /// the command-mode transform prompt, so the selection stays delimited
+    /// Built-in instruction for the pill's "✦ Polish" button. Rides the
+    /// command-mode transform prompt, so the selection stays delimited
     /// data. Proofread-only by design: the writer's voice is preserved.
     public static let instruction = """
     Proofread the text: fix spelling, punctuation, capitalization, and grammar \

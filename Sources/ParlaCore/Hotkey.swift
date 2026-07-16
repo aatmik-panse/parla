@@ -2,8 +2,7 @@ import AppKit
 
 /// Global dictation hotkeys. fn/Globe (keyCode 63) held is push-to-talk;
 /// fn+Space latches hands-free (fn, Space, or Return stops it); Esc cancels a dictation
-/// or dismisses the HUD toast; ⌃⌘V pastes the last transcript; ⌃⌘P polishes
-/// the current selection.
+/// or dismisses the HUD toast; ⌃⌘V pastes the last transcript.
 ///
 /// A CGEventTap (same Accessibility permission) replaced the old NSEvent
 /// global monitors: fn+Space / Esc / ⌃⌘V must be swallowed, not leak a space
@@ -24,8 +23,6 @@ public final class HotkeyMonitor {
         case handsFree
         /// ⌃⌘V while idle: paste the last transcript.
         case pasteLast
-        /// ⌃⌘P while idle: polish the current selection (one-tap proofread).
-        case polish
         /// ⌃⌘S while idle: open the scratchpad.
         case openScratchpad
         /// Esc while idle: dismiss the HUD toast.
@@ -104,10 +101,6 @@ public final class HotkeyMonitor {
         }
         if keyCode == 1, cmd, ctrl { // ⌃⌘S: open the scratchpad
             onEdge?(.openScratchpad)
-            return true
-        }
-        if keyCode == 35, cmd, ctrl { // ⌃⌘P: polish the selection
-            onEdge?(.polish)
             return true
         }
         if keyCode == 53 { onEdge?(.dismiss) } // Esc while idle: dismiss HUD toast, pass through
