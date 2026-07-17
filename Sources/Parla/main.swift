@@ -100,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         hud.onPolish = { [weak self] in self?.polishSelection() }
+        hud.onScratchpad = { [weak self] in self?.scratchpad.show() }
 
         hotkey.onEdge = { [weak self] edge in
             guard let self else { return }
