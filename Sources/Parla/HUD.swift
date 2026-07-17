@@ -175,6 +175,7 @@ final class HUD: NSObject, @unchecked Sendable {
         pill.onDragStart = { [weak self] in self?.beginDragChip() }
         pill.onDragEnd = { [weak self] in self?.snapToNearestEdge() }
         pill.onHover = { [weak self] inside in self?.hover(inside) }
+        pill.clickThroughButton = polishButton // drags over the button still move the pill
     }
 
     /// Hovering the idle bar morphs it into a "✦ Polish" chip; leaving (or any
@@ -496,8 +497,14 @@ final class DraggablePill: NSView {
     var onDragEnd: (() -> Void)?
     /// Cursor entered/left the pill (tracks the live frame via .inVisibleRect).
     var onHover: ((Bool) -> Void)?
+    /// Button whose hits the pill claims for itself, so a drag STARTING over it
+    /// still moves the pill (the button would otherwise swallow the mouseDown
+    /// and pin the pill under the hover chip's center). A press that never
+    /// drags and releases inside it fires the button's action instead.
+    weak var clickThroughButton: NSButton?
     private var dragOffset: NSPoint?  // mouse → window-origin gap at mouseDown
     private var didDrag = false       // plain clicks must not pin the pill
+    private var downAt = NSPoint.zero // screen point of mouseDown, for the drag threshold
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -510,24 +517,41 @@ final class DraggablePill: NSView {
     override func mouseEntered(with event: NSEvent) { onHover?(true) }
     override func mouseExited(with event: NSEvent) { onHover?(false) }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let view = super.hitTest(point)
+        if let button = clickThroughButton, !button.isHidden, view === button { return self }
+        return view
+    }
+
     override func mouseDown(with event: NSEvent) {
         guard let win = window else { return }
         didDrag = false
         let m = NSEvent.mouseLocation
+        downAt = m
         dragOffset = NSPoint(x: m.x - win.frame.origin.x, y: m.y - win.frame.origin.y)
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard let win = window, let off = dragOffset else { return }
-        if !didDrag { didDrag = true; onDragStart?() }
         let m = NSEvent.mouseLocation
+        if !didDrag {
+            // A few points of jitter is still a click — don't eat button taps.
+            guard abs(m.x - downAt.x) > 3 || abs(m.y - downAt.y) > 3 else { return }
+            didDrag = true
+            onDragStart?()
+        }
         win.setFrameOrigin(NSPoint(x: m.x - off.x, y: m.y - off.y))
     }
 
     override func mouseUp(with event: NSEvent) {
         defer { dragOffset = nil; didDrag = false }
-        guard didDrag, window != nil else { return }
-        onDragEnd?()
+        guard window != nil else { return }
+        if didDrag { onDragEnd?(); return }
+        // Plain click: fire the claimed button when released inside it.
+        if let button = clickThroughButton, !button.isHidden,
+           button.frame.contains(convert(event.locationInWindow, from: nil)) {
+            button.performClick(nil)
+        }
     }
 }
 

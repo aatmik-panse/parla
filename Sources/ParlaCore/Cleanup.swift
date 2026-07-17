@@ -171,17 +171,28 @@ public enum CleanupSanitizer {
 
     /// Sanitizer for selection edits (transforms/polish): strips only wrappers
     /// the ORIGINAL selection didn't have. The user's own quotes are content
-    /// and must survive the round-trip, as must boundary whitespace they
-    /// selected — otherwise an "unchanged" result would still rewrite the field.
+    /// and must survive the round-trip; boundary whitespace they selected is
+    /// restored verbatim — models routinely trim it, and losing selected
+    /// indentation or a trailing newline merges lines in the field.
     public static func sanitizeEdit(_ s: String, original: String) -> String {
-        guard original == original.trimmingCharacters(in: .whitespacesAndNewlines) else {
-            return s // selected boundary whitespace is content: hands off
+        let trimmedOriginal = original.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedOriginal == original {
+            if original.count >= 2, let first = original.first, let last = original.last,
+               pairs.contains(where: { first == $0.0 && last == $0.1 }) {
+                return s.trimmingCharacters(in: .whitespacesAndNewlines) // keep the user's quotes
+            }
+            return sanitize(s)
         }
-        if original.count >= 2, let first = original.first, let last = original.last,
-           pairs.contains(where: { first == $0.0 && last == $0.1 }) {
-            return s.trimmingCharacters(in: .whitespacesAndNewlines) // keep the user's quotes
-        }
-        return sanitize(s)
+        // A whitespace-only selection has no editable core: return it unchanged
+        // (the caller's no-change path then types nothing).
+        guard !trimmedOriginal.isEmpty else { return original }
+        // Rebuild the original's exact boundary around the edited core, whether
+        // or not the model preserved it.
+        let leading = String(original.prefix(while: \.isWhitespace))
+        let trailing = String(original.reversed().prefix(while: \.isWhitespace).reversed())
+        let core = sanitizeEdit(s.trimmingCharacters(in: .whitespacesAndNewlines),
+                                original: trimmedOriginal)
+        return leading + core + trailing
     }
 }
 

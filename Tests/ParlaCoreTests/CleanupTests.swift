@@ -205,6 +205,22 @@ final class CleanupTests: XCTestCase {
                        "  hi there\n")
     }
 
+    func testSanitizeEditRestoresBoundaryWhitespaceTheModelDropped() {
+        // Models routinely trim output; selected indentation and the trailing
+        // newline must come back regardless, or the edit merges lines.
+        XCTAssertEqual(CleanupSanitizer.sanitizeEdit("hi there", original: "  hi tehre\n"),
+                       "  hi there\n")
+    }
+
+    func testSanitizeEditQuotedCoreInsideBoundaryWhitespace() {
+        XCTAssertEqual(CleanupSanitizer.sanitizeEdit("\"hi there\"", original: " \"hi tehre\" "),
+                       " \"hi there\" ")
+    }
+
+    func testSanitizeEditWhitespaceOnlySelectionUnchanged() {
+        XCTAssertEqual(CleanupSanitizer.sanitizeEdit("anything", original: "  \n"), "  \n")
+    }
+
     // MARK: polish-button instruction
 
     func testPolishInstructionRidesTheTransformPrompt() {
