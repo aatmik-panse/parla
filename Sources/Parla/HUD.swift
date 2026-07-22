@@ -125,7 +125,7 @@ final class HUD: NSObject, @unchecked Sendable {
 
         // Flow-bar look (docs/plan.md §Flow Bar): near-black capsule with a thin
         // purple ring and soft lavender glow. Static colors in both appearances.
-        let container = NSView(frame: panel.contentView!.bounds)
+        let container = PassthroughView(frame: panel.contentView!.bounds)
         container.autoresizingMask = [.width, .height]
         pill.autoresizingMask = [.width, .height]
         pill.wantsLayer = true
@@ -573,6 +573,20 @@ final class HUD: NSObject, @unchecked Sendable {
             return s
         }
         return NSScreen.main
+    }
+}
+
+/// The panel's content-filling backdrop. The panel itself is padded well
+/// beyond the visible pill (room for the glow, and for the hover chip to grow
+/// into), so a plain NSView here would swallow every click in that whole
+/// padded rect — including clicks meant for whatever's underneath the idle
+/// bar's dead space. Only forward hits that land on an actual subview (the
+/// pill and its controls); anywhere else, return nil so the click passes
+/// through to the window below.
+final class PassthroughView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let view = super.hitTest(point)
+        return view === self ? nil : view
     }
 }
 
